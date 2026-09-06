@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Settings' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Settings' }] }) %>
+    <div class="content narrow">
+      <h1 class="page-title">Panchayat Configuration</h1>
+      <p class="page-sub">Configure the Panchayat identity used in document headers and signatures.</p>
+      <div id="toasts"></div>
+      <div class="panel"><div class="panel-head">Panchayat Master</div><div class="panel-body">
+        <div class="form-row">
+          <div class="field"><label>State</label><input id="p-state"></div>
+          <div class="field"><label>District</label><input id="p-district"></div>
+          <div class="field"><label>Block</label><input id="p-block"></div>
+          <div class="field"><label>Gram Panchayat</label><input id="p-gp"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>GP Code</label><input id="p-code"></div>
+          <div class="field"><label>PIN</label><input id="p-pin"></div>
+          <div class="field"><label>Phone</label><input id="p-phone"></div>
+          <div class="field"><label>Email</label><input id="p-email"></div>
+        </div>
+        <div class="field" style="margin-bottom:12px"><label>Office Address</label><textarea id="p-addr"></textarea></div>
+        <h3>Office Bearers</h3>
+        <div class="form-row">
+          <div class="field"><label>Pradhan</label><input id="p-pradhan"></div>
+          <div class="field"><label>Upa-Pradhan</label><input id="p-upa"></div>
+          <div class="field"><label>Panchayat Secretary</label><input id="p-sec"></div>
+        </div>
+        <div class="form-row">
+          <div class="field"><label>Technical Officer</label><input id="p-tech"></div>
+          <div class="field"><label>Accounts Officer</label><input id="p-acc"></div>
+        </div>
+        <button class="btn primary" onclick="save()">Save Configuration</button>
+      </div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  async function load() {
+    const d = await API.get('/api/panchayat');
+    const p = d.data;
+    document.getElementById('p-state').value = p.state || 'West Bengal';
+    document.getElementById('p-district').value = p.district || '';
+    document.getElementById('p-block').value = p.block || '';
+    document.getElementById('p-gp').value = p.gram_panchayat || '';
+    document.getElementById('p-code').value = p.gp_code || '';
+    document.getElementById('p-pin').value = p.pin || '';
+    document.getElementById('p-phone').value = p.phone || '';
+    document.getElementById('p-email').value = p.email || '';
+    document.getElementById('p-addr').value = p.office_address || '';
+    document.getElementById('p-pradhan').value = p.pradhan || '';
+    document.getElementById('p-upa').value = p.upa_pradhan || '';
+    document.getElementById('p-sec').value = p.panchayat_secretary || '';
+    document.getElementById('p-tech').value = p.technical_officer || '';
+    document.getElementById('p-acc').value = p.accounts_officer || '';
+  }
+  async function save() {
+    await API.put('/api/panchayat', {
+      state: document.getElementById('p-state').value, district: document.getElementById('p-district').value,
+      block: document.getElementById('p-block').value, gram_panchayat: document.getElementById('p-gp').value,
+      gp_code: document.getElementById('p-code').value, pin: document.getElementById('p-pin').value,
+      phone: document.getElementById('p-phone').value, email: document.getElementById('p-email').value,
+      office_address: document.getElementById('p-addr').value, pradhan: document.getElementById('p-pradhan').value,
+      upa_pradhan: document.getElementById('p-upa').value, panchayat_secretary: document.getElementById('p-sec').value,
+      technical_officer: document.getElementById('p-tech').value, accounts_officer: document.getElementById('p-acc').value,
+    });
+    toast('Configuration saved', 'success');
+  }
+  load();
+</script>
+</body>
+</html>

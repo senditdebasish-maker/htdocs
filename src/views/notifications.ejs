@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Notifications' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Notifications' }] }) %>
+    <div class="content narrow">
+      <h1 class="page-title">Notifications</h1>
+      <p class="page-sub">Pending approvals, deadlines, expiring documents, compliance issues.</p>
+      <button class="btn sm" onclick="markAll()">Mark all read</button>
+      <div id="list" style="margin-top:14px"></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  async function load() {
+    const d = await API.get('/api/notifications');
+    document.getElementById('list').innerHTML = d.data.rows.length ? d.data.rows.map(n => `
+      <div class="panel"><div class="panel-body" style="${n.is_read ? 'opacity:.6' : ''}">
+        <div style="display:flex;justify-content:space-between">
+          <strong>${esc(n.title)}</strong><span class="badge ${n.severity}">${n.severity}</span>
+        </div>
+        <div class="muted" style="margin-top:4px">${esc(n.body || '')}</div>
+        <div class="muted" style="font-size:11px;margin-top:4px">${n.created_at}</div>
+      </div></div>`).join('') : '<div class="empty"><div class="big">🔔</div>No notifications</div>';
+  }
+  async function markAll() {
+    const d = await API.get('/api/notifications');
+    await API.post('/api/notifications/read', { ids: d.data.rows.map(n => n.id) });
+    load();
+  }
+  load();
+</script>
+</body>
+</html>

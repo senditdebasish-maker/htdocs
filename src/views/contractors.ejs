@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Contractors' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Contractors' }] }) %>
+    <div class="content">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div><h1 class="page-title">Contractors</h1><p class="page-sub">Contractor / vendor master with document expiry tracking</p></div>
+        <button class="btn primary" onclick="toggleForm()">+ New Contractor</button>
+      </div>
+      <div id="toasts"></div>
+      <div class="panel" id="form-panel" style="display:none">
+        <div class="panel-head">New Contractor</div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="field"><label>Legal Name <span class="req">*</span></label><input id="c-name"></div>
+            <div class="field"><label>Business Name</label><input id="c-bname"></div>
+            <div class="field"><label>Mobile</label><input id="c-mobile"></div>
+            <div class="field"><label>Email</label><input id="c-email"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Registration No.</label><input id="c-reg"></div>
+            <div class="field"><label>Registration Class</label><input id="c-class"></div>
+            <div class="field"><label>PAN</label><input id="c-pan"></div>
+            <div class="field"><label>GST</label><input id="c-gst"></div>
+          </div>
+          <div class="field" style="margin-bottom:12px"><label>Address</label><textarea id="c-addr"></textarea></div>
+          <button class="btn primary" onclick="save()">Save Contractor</button>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-body">
+        <div class="form-row" style="grid-template-columns:1fr 1fr">
+          <div class="field"><label>Search</label><input id="f-q" onkeyup="debLoad()"></div>
+          <div class="field"><label>Status</label><select id="f-status" onchange="load()"><option value="">All</option><option value="active">Active</option><option value="debarred">Debarred</option><option value="inactive">Inactive</option></select></div>
+        </div>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Code</th><th>Name</th><th>Reg. Class</th><th>PAN</th><th>Status</th><th>Docs</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table></div>
+      </div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  let t;
+  function toggleForm() { const p = document.getElementById('form-panel'); p.style.display = p.style.display === 'none' ? '' : 'none'; }
+  async function save() {
+    await API.post('/api/contractors', { legal_name: document.getElementById('c-name').value, business_name: document.getElementById('c-bname').value, mobile: document.getElementById('c-mobile').value, email: document.getElementById('c-email').value, registration_no: document.getElementById('c-reg').value, registration_class: document.getElementById('c-class').value, pan: document.getElementById('c-pan').value, gst: document.getElementById('c-gst').value, address: document.getElementById('c-addr').value });
+    toast('Contractor created', 'success'); toggleForm(); load();
+  }
+  function debLoad() { clearTimeout(t); t = setTimeout(load, 300); }
+  async function load() {
+    const p = new URLSearchParams();
+    if (document.getElementById('f-q').value) p.set('q', document.getElementById('f-q').value);
+    if (document.getElementById('f-status').value) p.set('status', document.getElementById('f-status').value);
+    const d = await API.get('/api/contractors?' + p.toString());
+    document.getElementById('rows').innerHTML = d.data.rows.map(c => `
+      <tr>
+        <td class="mono">${esc(c.contractor_code)}</td>
+        <td>${esc(c.legal_name)}${c.business_name ? '<br><span class="muted">' + esc(c.business_name) + '</span>' : ''}</td>
+        <td>${esc(c.registration_class || '—')}</td>
+        <td>${esc(c.pan || '—')}</td>
+        <td><span class="badge ${c.status}">${c.status}</span></td>
+        <td>${c.expired_docs ? `<span class="badge expired">${c.expired_docs} expired</span>` : ''} ${c.expiring_docs ? `<span class="badge expiring_soon">${c.expiring_docs} expiring</span>` : ''} ${!c.expired_docs && !c.expiring_docs ? '<span class="muted">OK</span>' : ''}</td>
+        <td><a class="btn sm" href="#" onclick="view(${c.id})">View</a></td>
+      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">No contractors yet</div></td></tr>';
+  }
+  async function view(id) {
+    const d = await API.get('/api/contractors/' + id);
+    const c = d.data.contractor;
+    const s = d.data.sensitive;
+    const docs = d.data.documents.map(x => `<tr><td>${esc(x.doc_type)}</td><td>${esc(x.doc_name)}</td><td>${fmtDate(x.expiry_date)}</td><td><span class="badge ${x.expiry_status}">${x.expiry_status.replace(/_/g, ' ')}</span></td></tr>`).join('');
+    const popup = window.open('', '_blank');
+    popup.document.write(`<html><head><title>${esc(c.legal_name)}</title><link rel="stylesheet" href="/assets/app.css"></head><body style="padding:24px">
+      <h1>${esc(c.legal_name)}</h1>
+      <table class="table">
+        <tr><th>Code</th><td>${esc(c.contractor_code)}</td></tr>
+        <tr><th>Business</th><td>${esc(c.business_name || '')}</td></tr>
+        <tr><th>Address</th><td>${esc(c.address || '')}</td></tr>
+        <tr><th>Registration</th><td>${esc(c.registration_no || '')} (${esc(c.registration_class || '')}) valid to ${fmtDate(c.registration_valid_to)}</td></tr>
+        ${s ? `<tr><th>PAN / GST</th><td>${esc(s.pan || '—')} / ${esc(s.gst || '—')}</td></tr>
+        <tr><th>Bank</th><td>${esc(s.bank_account_no || '—')} (${esc(s.bank_ifsc || '')})</td></tr>` : ''}
+        <tr><th>Status</th><td><span class="badge ${c.status}">${c.status}</span></td></tr>
+      </table>
+      <h2>Documents</h2>
+      <table class="table"><thead><tr><th>Type</th><th>Name</th><th>Expiry</th><th>Status</th></tr></thead><tbody>${docs || '<tr><td colspan="4">None</td></tr>'}</tbody></table>
+    </body></html>`);
+  }
+  load();
+</script>
+</body>
+</html>

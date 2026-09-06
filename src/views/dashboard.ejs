@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <%- include('partials/head', { title: 'Dashboard' }) %>
+</head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Dashboard' }] }) %>
+    <div class="content">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+        <div>
+          <h1 class="page-title">Dashboard</h1>
+          <p class="page-sub">Overview of procurement, works, bills and payments</p>
+        </div>
+        <div>
+          <label for="fy" class="muted" style="margin-right:6px">Financial Year</label>
+          <select id="fy" style="width:auto" onchange="load()"></select>
+        </div>
+      </div>
+
+      <div class="cards" id="cards"></div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head">Tender Pipeline <span class="pill-link"><a href="/tenders">View all →</a></span></div>
+          <div class="panel-body no-pad"><div class="table-wrap"><table class="table" id="pipeline"></table></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">Recent Activity</div>
+          <div class="panel-body" id="activity"></div>
+        </div>
+      </div>
+      <div class="footer-note">
+        Amounts are derived from recorded records and reconcile against source registers. This portal is an administrative management system and is not the official GoWB e-procurement platform.
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  const fySel = document.getElementById('fy');
+  async function load() {
+    const ref = await API.get('/api/reference');
+    fySel.innerHTML = '<option value="">All years</option>' + ref.data.financialYears.map(f => `<option value="${f.id}" ${f.is_current ? 'selected' : ''}>${f.label}</option>`).join('');
+    const d = await API.get('/api/dashboard?fyId=' + (fySel.value || ''));
+    const s = d.data;
+    const t = s.tenders;
+    const cards = [
+      { k: 'Total Tenders', v: t.total, sub: 'All statuses' },
+      { k: 'Draft', v: t.draft || 0 },
+      { k: 'Published / Bidding', v: (t.published || 0) + (t.bidding || 0) },
+      { k: 'Under Evaluation', v: t.evaluation || 0 },
+      { k: 'Awarded', v: t.awarded || 0 },
+      { k: 'Ongoing Works', v: s.projects.ongoing || 0 },
+      { k: 'Completed', v: s.projects.completed || 0 },
+      { k: 'Cancelled', v: t.cancelled || 0 },
+      { k: 'Re-Tendered', v: t.retendered || 0 },
+      { k: 'Pending Approvals', v: s.pendingApprovals },
+      { k: 'Compliance Issues', v: s.complianceIssues },
+      { k: 'Pending Bills', v: s.bills.pending || 0 },
+      { k: 'Tender Value', v: fmtINR((t.tender_value || 0) / 100) },
+      { k: 'Awarded Value', v: fmtINR((s.awards.awardedMinor || 0) / 100) },
+      { k: 'Paid Value', v: fmtINR((s.payments.paidMinor || 0) / 100) },
+    ];
+    document.getElementById('cards').innerHTML = cards.map(c => `<div class="card"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join('');
+
+    const pipeline = s.statusPipeline;
+    document.getElementById('pipeline').innerHTML = '<thead><tr><th>Status</th><th class="num">Count</th></tr></thead><tbody>' +
+      (pipeline.length ? pipeline.map(p => `<tr><td><span class="badge ${p.status}">${p.status.replace(/_/g, ' ')}</span></td><td class="num">${p.c}</td></tr>`).join('') : '<tr><td colspan="2" class="muted">No tenders yet</td></tr>') +
+      '</tbody>';
+
+    const act = s.recentActivity || [];
+    document.getElementById('activity').innerHTML = act.length
+      ? act.slice(0, 10).map(a => `<div style="padding:7px 0;border-bottom:1px solid #eef1f5;font-size:12.5px"><strong>${esc(a.action)}</strong> <span class="muted">· ${esc(a.entity_type)}</span><br><span class="muted">${esc(a.entity_label || '')} — ${esc(a.actor_name || 'system')} · ${a.created_at}</span></div>`).join('')
+      : '<div class="empty">No activity yet</div>';
+  }
+  load();
+</script>
+</body>
+</html>

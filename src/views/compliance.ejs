@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Compliance Center' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Compliance Center' }] }) %>
+    <div class="content">
+      <h1 class="page-title">Compliance &amp; Risk Center</h1>
+      <p class="page-sub">Blocking issues, warnings, expiring documents, approvals, anomalies</p>
+      <div class="grid-2">
+        <div class="panel"><div class="panel-head">🔴 Blocking Issues</div><div class="panel-body" id="blockers"></div></div>
+        <div class="panel"><div class="panel-head">🟠 Warnings</div><div class="panel-body" id="warnings"></div></div>
+      </div>
+      <div class="grid-2">
+        <div class="panel"><div class="panel-head">📄 Expiring Contractor Documents</div><div class="panel-body no-pad"><div class="table-wrap"><table class="table"><thead><tr><th>Contractor</th><th>Document</th><th>Expiry</th><th>Status</th></tr></thead><tbody id="expiring"></tbody></table></div></div></div>
+        <div class="panel"><div class="panel-head">⏳ Pending Approvals</div><div class="panel-body" id="approvals"></div></div>
+      </div>
+      <div class="panel"><div class="panel-head">⚠️ Anomalies — BOQ overruns & delayed works</div><div class="panel-body" id="anomalies"></div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  async function load() {
+    const d = await API.get('/api/compliance/center');
+    const s = d.data;
+    const link = (id) => `<a href="/tenders/${id}">`;
+    document.getElementById('blockers').innerHTML = s.blockers.length ? s.blockers.map(t => `<div style="padding:6px 0;border-bottom:1px solid #eee">${link(t.id)}${esc(t.tender_number)}</a> — ${esc(t.title)}</div>`).join('') : '<div class="muted">No blocking issues 🎉</div>';
+    document.getElementById('warnings').innerHTML = s.warnings.length ? s.warnings.map(t => `<div style="padding:6px 0;border-bottom:1px solid #eee">${link(t.id)}${esc(t.tender_number)}</a> — ${esc(t.title)}</div>`).join('') : '<div class="muted">No warnings 🎉</div>';
+    document.getElementById('expiring').innerHTML = s.expiring.length ? s.expiring.map(x => `<tr><td>${esc(x.legal_name)}</td><td>${esc(x.doc_name)}</td><td>${fmtDate(x.expiry_date)}</td><td><span class="badge ${x.expiry_status}">${x.expiry_status.replace(/_/g, ' ')}</span></td></tr>`).join('') : '<tr><td colspan="4" class="muted">None</td></tr>';
+    document.getElementById('approvals').innerHTML = s.pendingApprovals.length ? s.pendingApprovals.map(a => `<div style="padding:6px 0;border-bottom:1px solid #eee">${esc(a.tender_number)} — <strong>${esc(a.step_name)}</strong> <span class="muted">(${a.status})</span></div>`).join('') : '<div class="muted">None</div>';
+    const ov = s.anomalies.overruns, dw = s.anomalies.delayedWorks;
+    document.getElementById('anomalies').innerHTML =
+      '<h3 style="margin-top:0">BOQ Quantity Overruns</h3>' + (ov.length ? ov.map(o => `<div class="alert warning">Measurement ${esc(o.measurement_number)} — item ${esc(o.item_no)}: cumulative ${o.cumulative_quantity} exceeds BOQ. <span class="muted">Work: ${esc(o.work_name)}</span></div>`).join('') : '<div class="muted">None</div>') +
+      '<h3>Delayed Works</h3>' + (dw.length ? dw.map(w => `<div class="alert danger">${esc(w.work_name)} — planned completion ${fmtDate(w.planned_completion_date)}</div>`).join('') : '<div class="muted">None</div>');
+  }
+  load();
+</script>
+</body>
+</html>

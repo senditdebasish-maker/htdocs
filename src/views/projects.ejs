@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Projects & Works' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Projects & Works' }] }) %>
+    <div class="content">
+      <h1 class="page-title">Projects &amp; Works</h1>
+      <p class="page-sub">Central project/work entity linking tender → award → execution → bills → completion</p>
+      <div id="toasts"></div>
+      <div class="panel">
+        <div class="panel-head">New Project <button class="btn sm" onclick="toggleForm()" style="float:right">+ Add</button></div>
+        <div class="panel-body" id="form-panel" style="display:none">
+          <div class="form-row">
+            <div class="field"><label>Financial Year <span class="req">*</span></label><select id="p-fy"></select></div>
+            <div class="field"><label>Scheme</label><select id="p-scheme"></select></div>
+            <div class="field"><label>Fund</label><select id="p-fund"></select></div>
+            <div class="field"><label>Work Name <span class="req">*</span></label><input id="p-work"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Location</label><input id="p-loc"></div>
+            <div class="field"><label>Estimate (₹)</label><input type="number" step="0.01" id="p-est"></div>
+            <div class="field"><label>Sanctioned (₹)</label><input type="number" step="0.01" id="p-sanc"></div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>Admin Approval No.</label><input id="p-aa"></div>
+            <div class="field"><label>Technical Sanction No.</label><input id="p-ts"></div>
+          </div>
+          <button class="btn primary" onclick="save()">Save Project</button>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-body">
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Work</th><th>FY</th><th>Scheme</th><th>Fund</th><th class="num">Estimate</th><th class="num">Awarded</th><th>Physical</th><th>Status</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table></div>
+      </div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  function toggleForm() { const p = document.getElementById('form-panel'); p.style.display = p.style.display === 'none' ? '' : 'none'; }
+  async function save() {
+    await API.post('/api/projects', {
+      fy_id: Number(document.getElementById('p-fy').value), scheme_id: document.getElementById('p-scheme').value || null, fund_id: document.getElementById('p-fund').value || null,
+      work_name: document.getElementById('p-work').value, location: document.getElementById('p-loc').value,
+      estimate_amount_minor: document.getElementById('p-est').value ? Math.round(Number(document.getElementById('p-est').value) * 100) : 0,
+      sanctioned_amount_minor: document.getElementById('p-sanc').value ? Math.round(Number(document.getElementById('p-sanc').value) * 100) : 0,
+      administrative_approval_no: document.getElementById('p-aa').value, technical_sanction_no: document.getElementById('p-ts').value,
+    });
+    toast('Project created', 'success'); toggleForm(); load();
+  }
+  async function load() {
+    const d = await API.get('/api/projects');
+    document.getElementById('rows').innerHTML = d.data.rows.map(p => `
+      <tr>
+        <td>${esc(p.work_name)}</td>
+        <td>${esc(p.fy_label)}</td>
+        <td>${esc(p.scheme_name || '—')}</td>
+        <td>${esc(p.fund_name || '—')}</td>
+        <td class="num">${fmtINR((p.estimate_amount_minor || 0) / 100)}</td>
+        <td class="num">${fmtINR((p.awarded_amount_minor || 0) / 100)}</td>
+        <td><div style="width:90px" class="bar"><span style="width:${p.physical_progress || 0}%"></span></div><span class="muted">${p.physical_progress || 0}%</span></td>
+        <td><span class="badge ${p.status}">${p.status.replace(/_/g, ' ')}</span></td>
+        <td><a class="btn sm" href="#" onclick="workflow(${p.id})">Workflow</a></td>
+      </tr>`).join('') || '<tr><td colspan="9"><div class="empty">No projects yet. Create one, then link tenders to it.</div></td></tr>';
+  }
+  async function workflow(id) {
+    const d = await API.get('/api/projects');
+    const p = d.data.rows.find(x => x.id === id);
+    const popup = window.open('', '_blank');
+    popup.document.write(`<html><head><title>${esc(p.work_name)}</title><link rel="stylesheet" href="/assets/app.css"></head><body style="padding:24px">
+      <h1>${esc(p.work_name)}</h1>
+      <p class="muted">Measurements, bills and completion are recorded against this work after award.</p>
+      <div id="tabs"></div>
+    </body></html>`);
+    // Load measurements/bills/completion into the popup
+    const [m, b, c] = await Promise.all([
+      API.get('/api/projects/' + id + '/measurements'),
+      API.get('/api/projects/' + id + '/bills'),
+      API.get('/api/projects/' + id + '/completion'),
+    ]);
+    const mt = m.data.rows.map(x => `<tr><td>${esc(x.measurement_number)}</td><td>${fmtDate(x.measurement_date)}</td><td>${x.items ? x.items.length : 0} items</td><td><span class="badge ${x.status}">${x.status}</span></td></tr>`).join('');
+    const bt = b.data.rows.map(x => `<tr><td>${esc(x.bill_number)}</td><td>${fmtINR((x.net_payable_minor || 0) / 100)}</td><td><span class="badge ${x.status}">${x.status}</span></td></tr>`).join('');
+    popup.document.getElementById('tabs').innerHTML = `
+      <div class="panel"><div class="panel-head">Measurements <button class="btn sm" onclick="opener.recordM(${id},'measurement')">+ New</button></div><div class="panel-body no-pad"><table class="table"><thead><tr><th>No</th><th>Date</th><th>Items</th><th>Status</th></tr></thead><tbody>${mt || '<tr><td colspan="4">None</td></tr>'}</tbody></table></div></div>
+      <div class="panel"><div class="panel-head">Bills <button class="btn sm" onclick="opener.recordM(${id},'bill')">+ New</button></div><div class="panel-body no-pad"><table class="table"><thead><tr><th>No</th><th>Net Payable</th><th>Status</th></tr></thead><tbody>${bt || '<tr><td colspan="3">None</td></tr>'}</tbody></table></div></div>
+      <div class="panel"><div class="panel-head">Completion</div><div class="panel-body"><span class="badge ${c.data.status}">${c.data.status}</span> <button class="btn sm" onclick="opener.advance(${id})">Advance</button></div></div>`;
+  }
+  window.recordM = async function (id, type) {
+    if (type === 'measurement') { await API.post('/api/projects/' + id + '/measurements', {}); }
+    else { await API.post('/api/projects/' + id + '/bills', {}); }
+    toast('Record created', 'success');
+  };
+  window.advance = async function (id) {
+    const s = prompt('New completion status (inspection_done, final_measurement_done, final_bill_done, final_payment_done, security_released, closed):');
+    if (!s) return;
+    await API.post('/api/projects/' + id + '/completion', { status: s });
+    toast('Completion advanced', 'success');
+  };
+  (async function init() {
+    const r = await API.get('/api/reference');
+    document.getElementById('p-fy').innerHTML = r.data.financialYears.filter(f => f.status === 'open').map(f => `<option value="${f.id}">${f.label}</option>`).join('');
+    document.getElementById('p-scheme').innerHTML = '<option value="">—</option>' + r.data.schemes.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    document.getElementById('p-fund').innerHTML = '<option value="">—</option>' + r.data.funds.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
+    load();
+  })();
+</script>
+</body>
+</html>

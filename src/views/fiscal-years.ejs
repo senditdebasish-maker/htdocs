@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Financial Years' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Financial Years' }] }) %>
+    <div class="content">
+      <h1 class="page-title">Financial Years</h1>
+      <p class="page-sub">Indian financial years: 01-Apr → 31-Mar (next year). Year-wise numbering and locking.</p>
+      <div id="toasts"></div>
+      <div class="panel"><div class="panel-head">Add Financial Year</div><div class="panel-body">
+        <div class="form-row">
+          <div class="field"><label>Start Date (01-Apr)</label><input type="date" id="fy-start"></div>
+          <div class="field"><label>End Date (31-Mar)</label><input type="date" id="fy-end"></div>
+          <div class="field"><label>Label (auto)</label><input id="fy-label" placeholder="e.g. 2028-29"></div>
+          <div class="field" style="justify-content:flex-end"><button class="btn primary" onclick="create()">Create</button></div>
+        </div>
+      </div></div>
+      <div class="panel"><div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+        <thead><tr><th>Label</th><th>Start</th><th>End</th><th>Status</th><th>Current</th><th>Actions</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div></div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  async function load() {
+    const d = await API.get('/api/financial-years');
+    document.getElementById('rows').innerHTML = d.data.rows.map(f => `<tr>
+      <td><strong>${esc(f.label)}</strong></td><td>${fmtDate(f.start_date)}</td><td>${fmtDate(f.end_date)}</td>
+      <td><span class="badge ${f.status}">${f.status}</span></td><td>${f.is_current ? '✅' : ''}</td>
+      <td class="btn-row">
+        <button class="btn sm" onclick="setCurrent(${f.id})">Set Current</button>
+        ${f.status === 'open' ? `<button class="btn sm" onclick="closeFy(${f.id})">Close</button>` : `<button class="btn sm" onclick="openFy(${f.id})">Reopen</button>`}
+      </td></tr>`).join('');
+  }
+  async function create() {
+    const s = document.getElementById('fy-start').value, e = document.getElementById('fy-end').value, l = document.getElementById('fy-label').value;
+    if (!s || !e) return toast('Start and end dates required', 'warning');
+    await API.post('/api/financial-years', { startDate: s, endDate: e, label: l });
+    toast('Financial year created', 'success'); load();
+  }
+  async function setCurrent(id) { await API.post('/api/financial-years/' + id + '/current', {}); toast('Current FY set', 'success'); load(); }
+  async function closeFy(id) { try { await API.post('/api/financial-years/' + id + '/close', {}); toast('FY closed', 'success'); } catch (e) { toast(e.message, 'danger'); } load(); }
+  async function openFy(id) { await API.post('/api/financial-years/' + id + '/open', {}); toast('FY reopened', 'success'); load(); }
+  load();
+</script>
+</body>
+</html>

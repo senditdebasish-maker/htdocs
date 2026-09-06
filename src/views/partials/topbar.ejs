@@ -1,0 +1,20 @@
+<header class="topbar">
+  <div style="display:flex;align-items:center;gap:12px">
+    <button class="btn sm hamburger" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+    <div class="crumbs">
+      <% if (typeof breadcrumbs !== 'undefined') { %>
+        <% breadcrumbs.forEach(function (b, i) { %>
+          <% if (i > 0) { %> <span>/</span> <% } %>
+          <% if (b.url) { %><a href="<%= b.url %>"><%= b.label %></a><% } else { %><%= b.label %><% } %>
+        <% }); %>
+      <% } else { %>
+        <%= config.systemShortName %>
+      <% } %>
+    </div>
+  </div>
+  <div class="user">
+    <a href="/notifications" title="Notifications">🔔 <span id="unread-count"></span></a>
+    <span id="whoami">—</span>
+    <a href="/logout" class="btn sm">Sign out</a>
+  </div>
+</header>

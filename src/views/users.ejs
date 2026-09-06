@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><%- include('partials/head', { title: 'Users' }) %></head>
+<body>
+<div class="layout">
+  <%- include('partials/sidebar') %>
+  <div class="main">
+    <%- include('partials/topbar', { breadcrumbs: [{ label: 'Users' }] }) %>
+    <div class="content">
+      <h1 class="page-title">Users &amp; Roles</h1>
+      <p class="page-sub">Role-based access control with least privilege and separation of duties.</p>
+      <div id="toasts"></div>
+      <div class="panel"><div class="panel-head">Add User</div><div class="panel-body">
+        <div class="form-row">
+          <div class="field"><label>Name <span class="req">*</span></label><input id="u-name"></div>
+          <div class="field"><label>Email <span class="req">*</span></label><input type="email" id="u-email"></div>
+          <div class="field"><label>Designation</label><input id="u-desig"></div>
+          <div class="field"><label>Password <span class="req">*</span></label><input type="password" id="u-pass"></div>
+        </div>
+        <div class="field" style="margin-bottom:12px"><label>Roles</label><div id="u-roles" class="btn-row"></div></div>
+        <button class="btn primary" onclick="create()">Create User</button>
+      </div></div>
+      <div class="panel"><div class="panel-body no-pad"><div class="table-wrap"><table class="table">
+        <thead><tr><th>Name</th><th>Email</th><th>Designation</th><th>Global Admin</th><th>Active</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div></div></div>
+    </div>
+  </div>
+</div>
+<%- include('partials/scripts') %>
+<script>
+  let roles = [];
+  async function load() {
+    const [u, r] = await Promise.all([API.get('/api/users'), API.get('/api/reference')]);
+    roles = r.data.roles;
+    document.getElementById('u-roles').innerHTML = roles.map(x => `<label class="chip"><input type="checkbox" value="${x.code}"> ${x.name}</label>`).join('');
+    document.getElementById('rows').innerHTML = u.data.rows.map(x => `<tr><td>${esc(x.name)}</td><td>${esc(x.email)}</td><td>${esc(x.designation || '—')}</td><td>${x.is_global_admin ? '✅' : ''}</td><td>${x.is_active ? '✅' : '❌'}</td></tr>`).join('');
+  }
+  async function create() {
+    const codes = [...document.querySelectorAll('#u-roles input:checked')].map(i => i.value);
+    await API.post('/api/users', {
+      name: document.getElementById('u-name').value, email: document.getElementById('u-email').value,
+      designation: document.getElementById('u-desig').value, password: document.getElementById('u-pass').value, role_codes: codes,
+    });
+    toast('User created', 'success'); load();
+  }
+  load();
+</script>
+</body>
+</html>
