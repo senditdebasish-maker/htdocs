@@ -286,3 +286,13 @@ function int_or_null($v): ?int
     }
     return (int) $v;
 }
+
+/**
+ * Quote an SQL identifier for the active driver. MySQL/MariaDB use backticks
+ * (required for reserved words such as `rank`, `key`, `value`); SQLite uses
+ * plain names (backticks are not valid there).
+ */
+function sql_ident(string $id): string
+{
+    return DB::isSqlite() ? $id : '`' . $id . '`';
+}

@@ -2,6 +2,8 @@
 -- GP Procurement & Work Management Portal — MySQL schema
 -- Target: XAMPP (MySQL 8 / MariaDB 10). Import into phpMyAdmin
 -- or run: mysql -u root < install.sql
+-- Foreign-key checks are disabled during creation, so the import
+-- order never fails (errno 150 impossible).
 -- =============================================================
 
 CREATE DATABASE IF NOT EXISTS `gp_portal` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -67,7 +69,6 @@ DROP TABLE IF EXISTS `document_generations`;
 DROP TABLE IF EXISTS `external_refs`;
 DROP TABLE IF EXISTS `imports`;
 DROP TABLE IF EXISTS `backups`;
-SET FOREIGN_KEY_CHECKS = 1;
 
 CREATE TABLE `roles` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1189,4 +1190,5 @@ CREATE TABLE `backups` (
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
 );
 
+SET FOREIGN_KEY_CHECKS = 1;
 

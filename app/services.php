@@ -220,7 +220,7 @@ function fin_rank_bids(int $tenderId): array
     $ranked = [];
     $rank = 1;
     foreach ($bids as $b) {
-        DB::run('UPDATE tender_bidders SET rank = ? WHERE id = ?', [$rank, (int) $b['bidder_id']]);
+        DB::run('UPDATE tender_bidders SET ' . sql_ident('rank') . ' = ? WHERE id = ?', [$rank, (int) $b['bidder_id']]);
         $ranked[] = ['bidder_id' => (int) $b['bidder_id'], 'contractor_id' => (int) $b['contractor_id'], 'totalMinor' => (int) $b['total_amount_minor'], 'rank' => $rank];
         $rank++;
     }
@@ -853,7 +853,7 @@ function award_recommend(int $tenderId, array $data, array $actor): array
         $awardId = (int) $existing['id'];
     } else {
         $awardId = DB::insert(
-            'INSERT INTO awards (uid, tender_id, contractor_id, bidder_id, awarded_amount_minor, rank, status, remarks, created_by)
+            'INSERT INTO awards (uid, tender_id, contractor_id, bidder_id, awarded_amount_minor, ' . sql_ident('rank') . ', status, remarks, created_by)
              VALUES (?,?,?,?,?,?,?,?,?)',
             [uid(), $tenderId, $contractorId, (int) $b['id'], $amt, $b['rank'] !== null ? (int) $b['rank'] : null, 'recommended', $data['remarks'] ?? null, (int) $actor['id']]
         );

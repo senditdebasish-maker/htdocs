@@ -456,134 +456,298 @@ function schema_tables(): array
     ];
 }
 
+/** Quote an identifier for the active driver (MySQL/MariaDB backticks). */
+function schema_quote(string $id): string
+{
+    return DB::isSqlite() ? $id : '`' . $id . '`';
+}
+
+/**
+ * Render a single column definition from the DSL, or null for the table-level
+ * composite-primary-key marker (whose columns come from their own 'fk' rows).
+ *
+ * When $alter is true the definition is relaxed (NOT NULL without DEFAULT →
+ * NULL, UNIQUE stripped) so it can be added to an existing table safely.
+ */
+function column_ddl(array $c, bool $alter = false): ?string
+{
+    $sqlite = DB::isSqlite();
+    $name = isset($c[1]) ? schema_quote((string) $c[1]) : '';
+    $line = null;
+    switch ($c[0]) {
+        case 'id':
+            $line = $sqlite ? 'id INTEGER PRIMARY KEY AUTOINCREMENT' : 'id INT AUTO_INCREMENT PRIMARY KEY';
+            break;
+        case 'uid':
+            $line = $sqlite ? 'uid TEXT NOT NULL UNIQUE' : 'uid VARCHAR(36) NOT NULL UNIQUE';
+            break;
+        case 'pk':
+            return null;
+        case 'str':
+            $null = ($c[3] ?? false) ? 'NULL' : 'NOT NULL';
+            $uniq = !empty($c[4]) ? ' UNIQUE' : '';
+            $line = "$name VARCHAR({$c[2]}) $null$uniq";
+            break;
+        case 'text':
+            $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
+            $line = "$name TEXT $null";
+            break;
+        case 'int':
+            $def = $c[2] ?? null;
+            $line = "$name INTEGER " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
+            break;
+        case 'big':
+            $def = $c[2] ?? null;
+            $type = $sqlite ? 'INTEGER' : 'BIGINT';
+            $line = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
+            break;
+        case 'real':
+            $def = $c[2] ?? null;
+            $type = $sqlite ? 'REAL' : 'DOUBLE';
+            $line = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
+            break;
+        case 'date':
+            $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
+            $type = $sqlite ? 'TEXT' : 'DATE';
+            $line = "$name $type $null";
+            break;
+        case 'ts':
+            $line = $sqlite
+                ? "$name TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                : "$name DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP";
+            break;
+        case 'tsx':
+            $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
+            $type = $sqlite ? 'TEXT' : 'DATETIME';
+            $line = "$name $type $null";
+            break;
+        case 'bool':
+            $def = $c[2] ?? 0;
+            $line = "$name INTEGER NOT NULL DEFAULT $def";
+            break;
+        case 'fk':
+            $null = ($c[4] ?? false) ? 'NULL' : 'NOT NULL';
+            $line = "$name INTEGER $null";
+            break;
+        case 'json':
+            $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
+            $line = "$name TEXT $null";
+            break;
+        case 'enum':
+            $def = $c[3] ?? null;
+            $type = $sqlite ? 'TEXT' : 'VARCHAR(64)';
+            $line = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT '$def'");
+            break;
+        default:
+            return null;
+    }
+    if ($alter) {
+        // ALTER TABLE ADD COLUMN cannot apply most constraints; relax them.
+        if (strpos($line, 'PRIMARY KEY') !== false || strpos($line, 'AUTO_INCREMENT') !== false) {
+            return null; // key columns cannot be appended to an existing table
+        }
+        if (strpos($line, 'NOT NULL') !== false && strpos($line, 'DEFAULT') === false) {
+            $line = str_replace('NOT NULL', 'NULL', $line);
+        }
+        $line = str_replace(' UNIQUE', '', $line);
+    }
+    return $line;
+}
+
+/** Render the CREATE TABLE statement for a single table. */
+function table_ddl(string $table): string
+{
+    $cols = schema_tables()[$table];
+    $lines = [];
+    $checks = [];
+    $pks = [];
+    foreach ($cols as $c) {
+        if ($c[0] === 'pk') {
+            $pks = array_map('schema_quote', array_slice($c, 1));
+            continue;
+        }
+        $line = column_ddl($c);
+        if ($line !== null) {
+            $lines[] = $line;
+        }
+        if ($c[0] === 'enum') {
+            $vals = array_map(function ($v) { return "'" . addslashes($v) . "'"; }, $c[2]);
+            // Table-level CHECK constraints must follow all column definitions
+            // in SQLite, so collect them and append below.
+            $checks[] = 'CHECK (' . schema_quote((string) $c[1]) . ' IN (' . implode(',', $vals) . '))';
+        }
+    }
+    foreach ($cols as $c) {
+        if ($c[0] === 'fk') {
+            $lines[] = 'FOREIGN KEY (' . schema_quote((string) $c[1]) . ') REFERENCES ' . schema_quote((string) $c[2]) . '(id) ON DELETE ' . $c[3];
+        }
+    }
+    foreach ($checks as $check) {
+        $lines[] = $check;
+    }
+    if ($pks) {
+        $lines[] = 'PRIMARY KEY (' . implode(', ', $pks) . ')';
+    }
+    return 'CREATE TABLE ' . schema_quote($table) . " (\n  " . implode(",\n  ", $lines) . "\n)";
+}
+
 /** Convert the DSL into CREATE TABLE statements for the active driver. */
 function schema_ddl(): array
 {
-    $sqlite = DB::isSqlite();
-    // MySQL reserves words like `key` and `rank`, and TEXT columns cannot carry
-    // literal defaults, so identifiers are backticked and enums use VARCHAR.
-    $q = function (string $id) use ($sqlite): string {
-        return $sqlite ? $id : '`' . $id . '`';
-    };
     $out = [];
-    foreach (schema_tables() as $table => $cols) {
-        $lines = [];
-        $checks = [];
-        $pks = [];
-        foreach ($cols as $c) {
-            $kind = $c[0];
-            $name = isset($c[1]) ? $q((string) $c[1]) : '';
-            switch ($kind) {
-                case 'id':
-                    $lines[] = $sqlite ? 'id INTEGER PRIMARY KEY AUTOINCREMENT' : 'id INT AUTO_INCREMENT PRIMARY KEY';
-                    break;
-                case 'uid':
-                    $lines[] = $sqlite ? 'uid TEXT NOT NULL UNIQUE' : 'uid VARCHAR(36) NOT NULL UNIQUE';
-                    break;
-                case 'pk':
-                    $pks = array_map($q, array_slice($c, 1));
-                    break;
-                case 'str':
-                    $len = $c[2];
-                    $null = ($c[3] ?? false) ? 'NULL' : 'NOT NULL';
-                    $uniq = !empty($c[4]) ? ' UNIQUE' : '';
-                    $lines[] = "$name VARCHAR($len) $null$uniq";
-                    break;
-                case 'text':
-                    $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
-                    $lines[] = "$name TEXT $null";
-                    break;
-                case 'int':
-                    $def = $c[2] ?? null;
-                    $lines[] = "$name INTEGER " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
-                    break;
-                case 'big':
-                    $def = $c[2] ?? null;
-                    $type = $sqlite ? 'INTEGER' : 'BIGINT';
-                    $lines[] = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
-                    break;
-                case 'real':
-                    $def = $c[2] ?? null;
-                    $type = $sqlite ? 'REAL' : 'DOUBLE';
-                    $lines[] = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT $def");
-                    break;
-                case 'date':
-                    $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
-                    $type = $sqlite ? 'TEXT' : 'DATE';
-                    $lines[] = "$name $type $null";
-                    break;
-                case 'ts':
-                    $lines[] = $sqlite
-                        ? "$name TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                        : "$name DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP";
-                    break;
-                case 'tsx':
-                    $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
-                    $type = $sqlite ? 'TEXT' : 'DATETIME';
-                    $lines[] = "$name $type $null";
-                    break;
-                case 'bool':
-                    $def = $c[2] ?? 0;
-                    $lines[] = "$name INTEGER NOT NULL DEFAULT $def";
-                    break;
-                case 'fk':
-                    $null = ($c[4] ?? false) ? 'NULL' : 'NOT NULL';
-                    $lines[] = "$name INTEGER $null";
-                    // FK constraint appended below
-                    break;
-                case 'json':
-                    $null = ($c[2] ?? false) ? 'NULL' : 'NOT NULL';
-                    $lines[] = "$name TEXT $null";
-                    break;
-                case 'enum':
-                    $vals = array_map(function ($v) { return "'" . addslashes($v) . "'"; }, $c[2]);
-                    $def = $c[3] ?? null;
-                    $type = $sqlite ? 'TEXT' : 'VARCHAR(64)';
-                    $lines[] = "$name $type " . ($def === null ? 'NULL' : "NOT NULL DEFAULT '$def'");
-                    // Table-level CHECK constraints must follow all column definitions
-                    // in SQLite, so collect them and append below.
-                    $checks[] = "CHECK ($name IN (" . implode(',', $vals) . '))';
-                    break;
-            }
-        }
-        // Foreign keys (table constraints).
-        foreach ($cols as $c) {
-            if ($c[0] === 'fk') {
-                $lines[] = "FOREIGN KEY ({$q($c[1])}) REFERENCES {$q($c[2])}(id) ON DELETE {$c[3]}";
-            }
-        }
-        foreach ($checks as $check) {
-            $lines[] = $check;
-        }
-        if ($pks) {
-            $lines[] = 'PRIMARY KEY (' . implode(', ', $pks) . ')';
-        }
-        $out[] = 'CREATE TABLE ' . $q($table) . " (\n  " . implode(",\n  ", $lines) . "\n)";
+    foreach (array_keys(schema_tables()) as $table) {
+        $out[] = table_ddl($table);
     }
     return $out;
 }
 
-/** Drop and recreate all tables. */
+/** Disable foreign-key enforcement; returns the statement that re-enables it. */
+function schema_fk_off(): string
+{
+    DB::pdo()->exec(DB::isSqlite() ? 'PRAGMA foreign_keys = OFF' : 'SET FOREIGN_KEY_CHECKS = 0');
+    return DB::isSqlite() ? 'PRAGMA foreign_keys = ON' : 'SET FOREIGN_KEY_CHECKS = 1';
+}
+
+/** Names of the tables that currently exist in the database. */
+function db_tables(): array
+{
+    if (DB::isSqlite()) {
+        return array_map(fn($r) => $r['name'], DB::all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"));
+    }
+    return array_map(fn($r) => $r['TABLE_NAME'], DB::all('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'));
+}
+
+/** Existing column names for one table (empty when the table is absent). */
+function db_columns(string $table): array
+{
+    if (DB::isSqlite()) {
+        return array_map(fn($r) => $r['name'], DB::all('PRAGMA table_info(' . schema_quote($table) . ')'));
+    }
+    return array_map(fn($r) => $r['COLUMN_NAME'], DB::all(
+        'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+        [$table]
+    ));
+}
+
+/** Stable fingerprint of the schema definition (drift detection). */
+function schema_version(): string
+{
+    return substr(md5(serialize(schema_tables())), 0, 12);
+}
+
+/** Compare the live database against the schema DSL. */
+function schema_health(): array
+{
+    $missingTables = [];
+    $missingColumns = [];
+    $existing = array_fill_keys(db_tables(), true);
+    foreach (schema_tables() as $table => $cols) {
+        if (!isset($existing[$table])) {
+            $missingTables[] = $table;
+            continue;
+        }
+        $actual = array_fill_keys(db_columns($table), true);
+        foreach ($cols as $c) {
+            $col = $c[1] ?? null;
+            if ($col !== null && $c[0] !== 'pk' && !isset($actual[$col])) {
+                $missingColumns[$table][] = $col;
+            }
+        }
+    }
+    return ['missing_tables' => $missingTables, 'missing_columns' => $missingColumns];
+}
+
+/**
+ * Non-destructive schema repair: create missing tables (with foreign-key
+ * checks off, so order never matters), add missing columns to existing tables,
+ * then (re)seed idempotent reference data and stamp the schema version.
+ * Returns a report of what was repaired.
+ */
+function schema_heal(): array
+{
+    $report = ['created_tables' => [], 'added_columns' => [], 'seeded' => false];
+    $health = schema_health();
+    $pdo = DB::pdo();
+
+    if ($health['missing_tables'] || $health['missing_columns']) {
+        $restore = schema_fk_off();
+        try {
+            foreach ($health['missing_tables'] as $table) {
+                $pdo->exec(table_ddl($table));
+                $report['created_tables'][] = $table;
+            }
+            foreach ($health['missing_columns'] as $table => $cols) {
+                foreach ($cols as $col) {
+                    $def = null;
+                    foreach (schema_tables()[$table] as $c) {
+                        if (($c[1] ?? null) === $col) {
+                            $def = column_ddl($c, true);
+                            break;
+                        }
+                    }
+                    if ($def !== null) {
+                        $pdo->exec('ALTER TABLE ' . schema_quote($table) . ' ADD COLUMN ' . $def);
+                        $report['added_columns'][$table][] = $col;
+                    }
+                }
+            }
+        } finally {
+            $pdo->exec($restore);
+        }
+    }
+
+    if ($report['created_tables'] || $report['added_columns'] || !schema_uptodate()) {
+        seed_all(false);
+        $report['seeded'] = true;
+    }
+
+    schema_stamp();
+    return $report;
+}
+
+/** Record the current schema version so later requests can fast-path. */
+function schema_stamp(): void
+{
+    $k = schema_quote('key');
+    $existing = DB::one("SELECT id FROM settings WHERE $k = 'schema.version'");
+    if ($existing) {
+        DB::run("UPDATE settings SET value = ? WHERE $k = 'schema.version'", [schema_version()]);
+    } else {
+        DB::insert('INSERT INTO settings (' . $k . ', value) VALUES (?,?)', ['schema.version', schema_version()]);
+    }
+}
+
+/** True if the schema is installed and matches the current definition. */
+function schema_uptodate(): bool
+{
+    if (!schema_installed()) {
+        return false;
+    }
+    try {
+        $k = schema_quote('key');
+        $stored = DB::val("SELECT value FROM settings WHERE $k = 'schema.version'");
+    } catch (Throwable $e) {
+        $stored = null;
+    }
+    return $stored === schema_version();
+}
+
+/** Drop and recreate all tables (foreign-key checks off throughout). */
 function create_tables(bool $drop = false): void
 {
     $pdo = DB::pdo();
-    if ($drop) {
-        if (DB::isSqlite()) {
-            $pdo->exec('PRAGMA foreign_keys = OFF');
-        } else {
-            $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+    $restore = schema_fk_off();
+    try {
+        if ($drop) {
+            foreach (array_keys(schema_tables()) as $t) {
+                $pdo->exec('DROP TABLE IF EXISTS ' . schema_quote($t));
+            }
         }
-        foreach (array_keys(schema_tables()) as $t) {
-            $pdo->exec("DROP TABLE IF EXISTS $t");
+        foreach (schema_ddl() as $ddl) {
+            $pdo->exec($ddl);
         }
-        if (DB::isSqlite()) {
-            $pdo->exec('PRAGMA foreign_keys = ON');
-        } else {
-            $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
-        }
-    }
-    foreach (schema_ddl() as $ddl) {
-        $pdo->exec($ddl);
+    } finally {
+        $pdo->exec($restore);
     }
 }
 

@@ -41,11 +41,12 @@ Verify from the XAMPP Control Panel that **Apache** and **MySQL** are running.
    C:\xampp\htdocs\gp-portal
    ```
 2. Start Apache + MySQL in the XAMPP Control Panel.
-3. Open the installer in your browser:
+3. Open the portal in your browser:
    ```
-   http://localhost/gp-portal/install.php
+   http://localhost/gp-portal/
    ```
-   (or `http://localhost/gp-portal/install`)
+   On a fresh database you are redirected to the installer
+   (`http://localhost/gp-portal/install.php` or `/install`).
 4. Click **Install now**. The installer:
    - creates the `gp_portal` database (if missing),
    - creates all tables,
@@ -140,7 +141,42 @@ from scratch.
 
 ---
 
-## 6. Key design notes
+## 6. Self-healing database
+
+The database layer repairs itself — you should never have to touch phpMyAdmin.
+
+- **Auto-create the database.** On the first connection, if `gp_portal` does not
+  exist it is created automatically (`utf8mb4_unicode_ci`).
+- **Order-independent table creation.** Tables are created with foreign-key
+  checks disabled, so a table may reference another table created later.
+  `install.sql` does the same — the “foreign key constraint is incorrectly
+  formed (errno 150)” failure is impossible.
+- **Broken/partial install repair.** If an import or an update left the schema
+  incomplete (some tables missing), the app detects it on the next request and
+  creates only the missing tables — **never dropping existing data**.
+- **Schema drift healing.** If the code's schema definition changes (a new
+  column or table is added), the app adds the missing tables/columns and
+  re-runs the idempotent seed automatically. A stored `schema.version` stamp
+  makes healthy requests take a fast path.
+- **Connection recovery.** A lost MySQL connection (“server has gone away”,
+  timeouts, server restart) is detected and re-established transparently.
+- **Non-destructive repair.** The installer’s **“Repair database”** button
+  (and `php seed.php --heal`) only *adds* what is missing; it never deletes
+  rows. `php seed.php --reset` is the destructive full rebuild.
+
+Check health any time:
+
+```
+php seed.php --check    # lists missing tables/columns (exit 0 = healthy)
+php seed.php --heal     # repair in place
+```
+
+If MySQL itself is down, the portal shows a clear “Database unavailable” page
+instead of a fatal error.
+
+---
+
+## 7. Key design notes
 
 - **Decimal-safe money** — every amount is stored as integer *minor units*
   (paise). No floating-point arithmetic for money.
@@ -163,7 +199,7 @@ from scratch.
 
 ---
 
-## 7. Post-install checklist
+## 8. Post-install checklist
 
 1. Change the seed admin password.
 2. Create real users with least-privilege roles (Pradhan, Secretary, Technical
@@ -173,14 +209,15 @@ from scratch.
 4. Set `SESSION_COOKIE_SECURE = 1` if you serve the portal over HTTPS.
 5. Back up regularly — `data/backups` is the convention for exports.
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 - **"Could not connect to MySQL"** — MySQL not started in XAMPP, or wrong
   credentials in `config.php` (XAMPP root password is empty by default).
-- **"Foreign key constraint is incorrectly formed" (errno 150)** — you are using
-  an outdated `install.sql`; the schema now creates tables in FK-dependency
-  order. Re-import the current `install.sql` (it drops and recreates all tables
-  first).
+- **"Foreign key constraint is incorrectly formed" (errno 150)** — an outdated
+  `install.sql` or an interrupted import left a partial schema. Just open the
+  site (or `/install`) and it self-heals, or re-import the current `install.sql`
+  (foreign-key checks are disabled during creation, so this can no longer
+  happen).
 - **Pretty URLs 404** — `mod_rewrite` is disabled. Enable it in
   `xampp/apache/conf/httpd.conf` (`LoadModule rewrite_module …`), then restart
   Apache. The app also works via `index.php/...` paths without rewrites.
