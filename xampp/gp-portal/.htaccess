@@ -1,0 +1,16 @@
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  # Serve existing files/directories directly (assets, generated docs).
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  # Route everything else through the front controller.
+  RewriteRule ^ index.php [L]
+</IfModule>
+
+# Do not serve raw database files.
+<FilesMatch "\.(sqlite|db|sql)$">
+  Require all denied
+</FilesMatch>

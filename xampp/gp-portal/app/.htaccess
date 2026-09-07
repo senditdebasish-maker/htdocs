@@ -1,0 +1,2 @@
+# Application classes/helpers are PHP-included, never served over HTTP.
+Require all denied

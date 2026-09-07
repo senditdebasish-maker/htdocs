@@ -1,0 +1,3 @@
+# Uploads, generated documents, backups and the SQLite dev database are
+# never served directly — only through the authenticated document route.
+Require all denied

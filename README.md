@@ -18,11 +18,31 @@ Execution → Measurement → Bills → Payments → Completion → Audit → Re
 
 ---
 
+## XAMPP (PHP + MySQL) — the deployable version
+
+To run this portal inside **XAMPP** (Apache + PHP + MySQL) without Node.js,
+use the self-contained PHP port in [`xampp/gp-portal/`](xampp/gp-portal/).
+It ships with a web installer, an `install.sql` schema, and a CLI seeder.
+
+```bash
+# 1. Copy the folder into htdocs
+cp -r xampp/gp-portal  C:/xampp/htdocs/gp-portal
+
+# 2. Open the installer in a browser
+#    http://localhost/gp-portal/install.php
+```
+
+Full instructions, configuration, and a demo-lifecycle guide are in
+[xampp/gp-portal/README.md](xampp/gp-portal/README.md).
+
+---
+
 ## Technology
 
 | Concern | Choice |
 | --- | --- |
-| Runtime | Node.js 22+ (built-in `node:sqlite`, zero native deps) |
+| XAMPP port (primary) | PHP 8 + MySQL/MariaDB, zero dependencies — `xampp/gp-portal/` |
+| Node reference build | Node.js 22+ (built-in `node:sqlite`, zero native deps) |
 | Web framework | Express 4 + EJS (CommonJS) |
 | Storage | SQLite (WAL), single-file `data/app.db` |
 | Money | **Integer minor units only** (₹1 = 100 minor). No floating point anywhere. |

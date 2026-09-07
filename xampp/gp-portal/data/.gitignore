@@ -1,0 +1,4 @@
+# Runtime data stays out of Git; only the protection rules are tracked.
+*
+!.gitignore
+!.htaccess

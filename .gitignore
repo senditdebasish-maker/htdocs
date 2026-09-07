@@ -2,7 +2,7 @@
 node_modules/
 
 # Runtime data (database, uploads, backups, logs)
-data/
+/data/
 *.db
 *.db-wal
 *.db-shm
