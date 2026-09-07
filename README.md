@@ -1,12 +1,15 @@
-# Gram Panchayat Procurement, Tender, Work, Billing, Payment, Audit & Reporting Portal
+# Gram Panchayat Procurement & Work Management Portal (XAMPP)
 
-A production-grade management portal for West Bengal Gram Panchayats covering the full
-public-works lifecycle:
+A production-grade **Gram Panchayat Procurement, Tender, Work, Billing, Payment,
+Audit & Reporting Management Portal** written in native **PHP + MySQL** so it
+runs directly inside **XAMPP** (Apache + PHP + MySQL/MariaDB). No Node.js, no
+build step, no Composer dependencies.
 
-**Financial Year → Scheme → Project → Administrative Approval → Technical Sanction →
-Tender → NIT → Publication → Bidding → Technical Evaluation → Financial Evaluation →
-Comparative Statement → L1/L2/L3 → Approval → LOA → Agreement → Work Order →
-Execution → Measurement → Bills → Payments → Completion → Audit → Reports.**
+Lifecycle covered: **FY → Scheme → Project → Administrative Approval →
+Technical Sanction → Tender → NIT → Publication → Bids → Technical Evaluation →
+Financial Evaluation → Comparative (L1/L2/L3) → Approval → LOA → Agreement →
+Work Order → Execution → Measurement → Bills → Payments → Completion → Audit →
+Reports.**
 
 > ⚠️ **Legal-integrity notice.** This system records and enforces *process*, not law.
 > Generated documents are **system-generated drafts**, never official government
@@ -18,162 +21,168 @@ Execution → Measurement → Bills → Payments → Completion → Audit → Re
 
 ---
 
-## XAMPP (PHP + MySQL) — the deployable version
+## 1. Requirements
 
-To run this portal inside **XAMPP** (Apache + PHP + MySQL) without Node.js,
-use the self-contained PHP port in [`xampp/gp-portal/`](xampp/gp-portal/).
-It ships with a web installer, an `install.sql` schema, and a CLI seeder.
+| Component | Minimum |
+|---|---|
+| XAMPP | 8.x (PHP 8.0+) — PHP 8.1/8.2/8.3 recommended |
+| PHP extensions | `pdo_mysql`, `pdo_sqlite` (optional dev), `mbstring`, `openssl`, `fileinfo` |
+| Web server | Apache with `mod_rewrite` enabled (on by default in XAMPP) |
+| Database | MySQL / MariaDB (bundled with XAMPP) |
 
-```bash
-# 1. Copy the folder into htdocs
-cp -r xampp/gp-portal  C:/xampp/htdocs/gp-portal
-
-# 2. Open the installer in a browser
-#    http://localhost/gp-portal/install.php
-```
-
-Full instructions, configuration, and a demo-lifecycle guide are in
-[xampp/gp-portal/README.md](xampp/gp-portal/README.md).
+Verify from the XAMPP Control Panel that **Apache** and **MySQL** are running.
 
 ---
 
-## Technology
+## 2. Install (quick start)
 
-| Concern | Choice |
-| --- | --- |
-| XAMPP port (primary) | PHP 8 + MySQL/MariaDB, zero dependencies — `xampp/gp-portal/` |
-| Node reference build | Node.js 22+ (built-in `node:sqlite`, zero native deps) |
-| Web framework | Express 4 + EJS (CommonJS) |
-| Storage | SQLite (WAL), single-file `data/app.db` |
-| Money | **Integer minor units only** (₹1 = 100 minor). No floating point anywhere. |
-| PDF | PDFKit (server-generated drafts) |
-| Spreadsheet | ExcelJS (BOQ import/export, reports) |
-| Uploads | Multer (25 MB default) |
-| Tests | `node:test` + supertest |
+1. Copy the contents of this repository into XAMPP's document root, e.g.
+   ```
+   C:\xampp\htdocs\gp-portal
+   ```
+2. Start Apache + MySQL in the XAMPP Control Panel.
+3. Open the installer in your browser:
+   ```
+   http://localhost/gp-portal/install.php
+   ```
+   (or `http://localhost/gp-portal/install`)
+4. Click **Install now**. The installer:
+   - creates the `gp_portal` database (if missing),
+   - creates all tables,
+   - seeds reference data (roles, permissions, financial years, rules & rule
+     references, schemes/funds, document templates, settings).
+5. Sign in at `http://localhost/gp-portal/login` with the seed administrator:
+   - Email: `admin@panchayat.local`
+   - Password: `ChangeMe@12345`  ← **change immediately** (edit `SEED_ADMIN_PASSWORD` in `config.php` *before* installing, or change it after first login).
 
----
+> The seed admin password is set in `config.php` (`SEED_ADMIN_PASSWORD`) and only
+> used during installation. It never appears again in plain text.
 
-## Quick start
+### Manual alternative (phpMyAdmin)
 
-```bash
-npm install
-cp .env.example .env        # then set SESSION_SECRET
-npm start                   # http://localhost:3000
-```
-
-Default seeded admin (change in production):
-
-| Field | Value |
-| --- | --- |
-| Email | `admin@panchayat.local` |
-| Password | `ChangeMe@12345` |
-
-Useful scripts:
-
-```bash
-npm start          # run server
-npm run dev        # run with --watch
-npm test           # full test suite (unit + integration, in-memory DB)
-npm run lint       # eslint
-npm run seed       # re-run essential seed (idempotent)
-npm run seed:reset # drop all tables, migrate, reseed
-npm run demo       # clearly-labelled [DEMO] end-to-end sample data
-npm run demo:reset # remove [DEMO] sample data
-npm run backup     # SQLite backup
-```
-
-`bash scripts/lifecycle-test.sh [base_url]` runs a full end-to-end HTTP smoke test
-(login → tender → award → work order → bill → payment → completion) against a running
-server. It assumes a freshly seeded database.
+1. In phpMyAdmin, create a database `gp_portal` (utf8mb4_unicode_ci).
+2. Import `install.sql` (in the project root).
+3. Run `php seed.php` from the project folder in a terminal (XAMPP Shell), **or**
+   visit `install.php` and click **Install now** (it will only seed; tables
+   already exist).
 
 ---
 
-## Architecture
+## 3. Configuration
 
-```
-src/
-├── server.js          # bootstrap (listen, session store)
-├── app.js             # Express shell, middleware, error handling
-├── config.js          # env loader + path defaults
-├── sessionStore.js    # SQLite-backed express-session store
-├── auth/              # passwords (bcrypt), permissions matrix, RBAC middleware
-├── db/                # database wrapper, migrations (versioned), seed, demo data
-├── routes/
-│   ├── api.js         # full REST API (server-side authorization on every route)
-│   └── pages.js       # EJS page router
-├── services/          # domain logic (18 services)
-├── util/              # money (minor-unit), dates (Indian FY), errors, uuid
-└── views/             # EJS templates
-```
+Everything lives in **`config.php`**. Defaults target a stock XAMPP install and
+can be overridden with environment variables (optional) or by editing the file.
 
-### Money (decimal-safe)
+| Setting | Default | Notes |
+|---|---|---|
+| `DB_DRIVER` | `mysql` | `mysql` for XAMPP, `sqlite` for a zero-setup dev DB |
+| `DB_HOST` / `DB_PORT` | `127.0.0.1` / `3306` | XAMPP MySQL |
+| `DB_NAME` | `gp_portal` | created automatically by the installer |
+| `DB_USER` / `DB_PASS` | `root` / `` (empty) | XAMPP default; set a password if you configured one |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | see file | first-install admin only |
+| `SESSION_COOKIE_SECURE` | `0` | set `1` only when served over HTTPS |
+| `RATE_LIMIT_*` | enabled | login brute-force throttling |
 
-`src/util/money.js` performs all arithmetic in **integer minor units** (paise).
-API endpoints accept `*_minor` integer fields and return `*_minor` integers; the UI
-formats them. There is no `float`/`double` money anywhere in the stack.
-
-### Authorization
-
-Every API route enforces a permission server-side (`src/auth/rbac.js`). The frontend
-never gates business logic. Records lock at workflow stages (e.g. a published tender
-cannot be edited; a certified bill cannot be silently changed).
-
-### Workflow engine
-
-`src/services/workflowService.js` drives role-based approval chains for tenders and
-bills. Each step requires a specific role (`technical_officer`, `panchayat_secretary`,
-`pradhan`, `tender_committee`, …); wrong-role attempts are rejected with 403.
-
-### Rules & Compliance engine
-
-`src/services/complianceService.js` evaluates a versioned, configurable rule set
-(`rulesets` + `rules` tables, seeded from official WB sources in `rule_references`).
-Every finding is one of `pass / fail / warning / info / verification`. Manual or
-uncertain rules return **"Verification Required"** rather than a false legal claim.
-
-### Numbering
-
-`src/services/numberingService.js` issues FY-scoped sequence numbers such as
-`GP/NIT/2026-27/001`, `LOA/2026-27/001`, `WO/2026-27/001`, `BILL/2026-27/001`,
-`PVR/2026-27/0001`.
-
-### Documents & templates
-
-Uploaded files (contractor registrations, tenders) and generated PDF drafts (NIT, LOA,
-Work Order, Completion Certificate) are stored under `data/`. Templates are versioned
-in the `templates` table; every generated draft carries a verification code and a
-"system-generated draft" notice.
+The app auto-detects its base path from `SCRIPT_NAME`, so it works at the web
+root **or** inside `htdocs\gp-portal` with no further changes.
 
 ---
 
-## Domain model (summary)
+## 4. Folder layout
 
-- **Financial years** (`financial_years`) — Indian FY (Apr–Mar), one *current* at a time.
-- **Schemes / Funds** — funding sources and schemes.
-- **Projects** — approved work with estimate, admin approval & technical sanction.
-- **Tenders** — BOQ, corrigenda, re-tender, cancellation; versioned snapshots (original data is never overwritten).
-- **Bids & evaluations** — two-bid system (technical then financial), L1/L2/L3 ranking.
-- **Awards** — recommendation → approval → LOA → agreement → work order.
-- **Execution** — progress, extensions, measurements (with overrun flags).
-- **Bills & payments** — running/final bills, retention, deductions, recoveries, recorded payments.
-- **Completion** — inspection → final measurement → final bill → security release → closure + certificate.
-- **Audit** — append-only audit log on every mutating action.
-- **Reports** — reconciliation (awarded vs paid vs completed), dimensional reports.
-- **Public portal** — `/public` exposes only published, non-confidential data.
+```
+├── index.php          Front controller / router (all requests)
+├── install.php        Web installer (also reachable at /install)
+├── install.sql        MySQL schema for phpMyAdmin import
+├── seed.php           CLI seeder (php seed.php --reset --demo)
+├── config.php         All configuration
+├── .htaccess          Rewrite + deny raw DB files
+├── assets/            Public CSS/JS
+├── app/               Application code (PHP includes; blocked over HTTP)
+│   ├── db.php             PDO wrapper (MySQL + SQLite)
+│   ├── schema.php         59-table schema + DDL renderer (FK-ordered)
+│   ├── auth.php           Session, CSRF, RBAC, login
+│   ├── workflow.php       Configurable approval workflows
+│   ├── compliance.php     Rules & compliance engine
+│   ├── services.php       Domain services (tenders, bills, payments…)
+│   ├── documents.php      Generated-draft documents (NIT/LOA/WO/completion)
+│   ├── seed.php           Idempotent seeders + [DEMO] lifecycle
+│   ├── view.php           Layout/HTML helpers
+│   └── …
+└── data/              Runtime data (uploads, generated docs, logs, SQLite dev DB)
+    └── .htaccess      Denies direct HTTP access
+```
 
 ---
 
-## Tests
+## 5. Seeding the demonstration lifecycle
 
-`npm test` runs 36 tests: money/dates/compliance/workflow unit tests, the full
-end-to-end lifecycle integration test, and a hostile-QA security suite
-(unauthenticated access, privilege escalation, record locking, duplicate numbers,
-over-payment, document expiry, cancellation/reactivation, public-data leakage).
+A clearly-labelled **`[DEMO]`** end-to-end tender can be seeded for a full walk
+through of the lifecycle:
 
-## Security notes
+```
+php seed.php --demo
+```
 
-- bcrypt password hashing; session cookies (`httpOnly`, `sameSite=lax`); SQLite
-  parameterised statements only (no string-built SQL for user input).
-- Path-traversal-guarded uploads/downloads with allow-listed MIME types.
-- Auth rate-limiting; CSRF-sensible (same-site + state-changing POSTs are session-bound).
-- `X-Powered-By` disabled; security headers applied.
+This creates `[DEMO]` contractors, a project, a tender that reaches the awarded
+stage (NIT → bids → technical/financial evaluation → L1 → award → LOA →
+agreement → work order), a measurement, a running bill, a recorded payment and a
+closed completion certificate — the complete loop.
+
+Reset it at any time:
+
+```
+php seed.php --demo-reset
+```
+
+Run `php seed.php --reset` to rebuild base reference data (roles, rules, etc.)
+from scratch.
+
+---
+
+## 6. Key design notes
+
+- **Decimal-safe money** — every amount is stored as integer *minor units*
+  (paise). No floating-point arithmetic for money.
+- **Server-side authorization** — every action re-checks RBAC on the server; the
+  HTML layer only reflects what the server permits.
+- **Audit trail** — append-only `audit_logs` record every meaningful action.
+- **Configurable workflow & numbering** — approval chains and number formats
+  (e.g. `GP/NIT/2026-27/001`) are data-driven, not hard-coded.
+- **Rules & compliance engine** — rules are versioned and sourced from published
+  West Bengal Government references. Where a rule depends on facts the system
+  cannot verify, it reports **"Verification Required"** instead of asserting
+  compliance. The system **never** claims a tender is legally compliant — only
+  that it "passes the configured system checks."
+- **Generated documents** — NIT/LOA/Work Order/Completion drafts are
+  *system-generated drafts*, explicitly labelled **not official documents**.
+  No digital signatures, e-procurement sync, or bank execution are faked —
+  payments are "recorded," never "executed."
+- **Record locking** — tenders are locked at the award stage; changes require
+  corrigendum/versioning (original data is never overwritten).
+
+---
+
+## 7. Post-install checklist
+
+1. Change the seed admin password.
+2. Create real users with least-privilege roles (Pradhan, Secretary, Technical
+   Officer, Data Entry, etc.).
+3. Review the default rules and their sources (Rules & Refs page); adjust the
+   active rule set to your Panchayat's circulars.
+4. Set `SESSION_COOKIE_SECURE = 1` if you serve the portal over HTTPS.
+5. Back up regularly — `data/backups` is the convention for exports.
+
+## 8. Troubleshooting
+
+- **"Could not connect to MySQL"** — MySQL not started in XAMPP, or wrong
+  credentials in `config.php` (XAMPP root password is empty by default).
+- **"Foreign key constraint is incorrectly formed" (errno 150)** — you are using
+  an outdated `install.sql`; the schema now creates tables in FK-dependency
+  order. Re-import the current `install.sql` (it drops and recreates all tables
+  first).
+- **Pretty URLs 404** — `mod_rewrite` is disabled. Enable it in
+  `xampp/apache/conf/httpd.conf` (`LoadModule rewrite_module …`), then restart
+  Apache. The app also works via `index.php/...` paths without rewrites.
+- **Installer loops** — `data/` must be writable by Apache so generated files
+  and the SQLite dev DB can be created.

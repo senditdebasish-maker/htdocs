@@ -1,20 +1,13 @@
-# Dependencies
-node_modules/
-
-# Runtime data (database, uploads, backups, logs)
+# Runtime data (database, uploads, generated documents, backups, logs)
 /data/
 *.db
 *.db-wal
 *.db-shm
-
-# Environment / secrets
-.env
-.env.local
-.env.*.local
+*.sqlite
+*.sqlite3
 
 # Logs
 *.log
-logs/
 
 # OS / editor
 .DS_Store
@@ -22,12 +15,4 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-
-# Test / coverage
-coverage/
-.nyc_output/
-
-# Build output
-dist/
-build/
-out/
+*~
