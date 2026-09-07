@@ -328,8 +328,8 @@ function seed_settings(): void
         'contractor.expiry_warning_days' => '60',
     ];
     foreach ($defaults as $k => $v) {
-        if (!DB::one('SELECT id FROM settings WHERE key = ?', [$k])) {
-            DB::insert('INSERT INTO settings (key, value) VALUES (?,?)', [$k, $v]);
+        if (!DB::one('SELECT id FROM settings WHERE ' . sql_ident('key') . ' = ?', [$k])) {
+            DB::insert('INSERT INTO settings (' . sql_ident('key') . ', ' . sql_ident('value') . ') VALUES (?,?)', [$k, $v]);
         }
     }
 }
@@ -454,7 +454,7 @@ HTML;
 // ---------------------------------------------------------------------------
 function demo_is_seeded(): bool
 {
-    return (bool) DB::one("SELECT id FROM settings WHERE key = 'demo.seeded'");
+    return (bool) DB::one('SELECT id FROM settings WHERE ' . sql_ident('key') . " = 'demo.seeded'");
 }
 
 function demo_seed(): array
@@ -546,10 +546,10 @@ function demo_seed(): array
     completion_advance($projectId, ['status' => 'closed', 'final_measurement_id' => (int) $m['id'], 'final_bill_id' => (int) $bill['id']], $actor);
     document_generate_completion($projectId, $actor);
 
-    if (DB::one("SELECT id FROM settings WHERE key = 'demo.seeded'")) {
-        DB::run("UPDATE settings SET value = '1' WHERE key = 'demo.seeded'");
+    if (DB::one('SELECT id FROM settings WHERE ' . sql_ident('key') . " = 'demo.seeded'")) {
+        DB::run('UPDATE settings SET ' . sql_ident('value') . " = '1' WHERE " . sql_ident('key') . " = 'demo.seeded'");
     } else {
-        DB::insert("INSERT INTO settings (key, value) VALUES ('demo.seeded','1')");
+        DB::insert('INSERT INTO settings (' . sql_ident('key') . ', ' . sql_ident('value') . ") VALUES ('demo.seeded','1')");
     }
     return [
         'seeded' => true,
@@ -562,7 +562,7 @@ function demo_seed(): array
 
 function demo_reset(): array
 {
-    DB::run("DELETE FROM settings WHERE key = 'demo.seeded'");
+    DB::run('DELETE FROM settings WHERE ' . sql_ident('key') . " = 'demo.seeded'");
     $demoProjects = DB::all("SELECT id FROM projects WHERE work_name LIKE '[DEMO]%'");
     foreach ($demoProjects as $p) {
         $pid = (int) $p['id'];

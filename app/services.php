@@ -94,7 +94,7 @@ function fy_next_serial(string $scope, ?int $fyId, ?int $panchayatId = null, str
 // ===========================================================================
 function num_setting(string $key, string $def): string
 {
-    $r = DB::one('SELECT value FROM settings WHERE key = ?', [$key]);
+    $r = DB::one('SELECT ' . sql_ident('value') . ' FROM settings WHERE ' . sql_ident('key') . ' = ?', [$key]);
     return ($r && $r['value'] !== null && $r['value'] !== '') ? $r['value'] : $def;
 }
 
@@ -248,7 +248,7 @@ function contractor_expiry_status(?string $expiryDate): string
     if ($days === null) {
         return 'verification_required';
     }
-    $warn = (int) (DB::val("SELECT value FROM settings WHERE key = 'contractor.expiry_warning_days'") ?: 60);
+    $warn = (int) (DB::val('SELECT ' . sql_ident('value') . ' FROM settings WHERE ' . sql_ident('key') . " = 'contractor.expiry_warning_days'") ?: 60);
     if ($days < 0) {
         return 'expired';
     }

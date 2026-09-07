@@ -709,11 +709,12 @@ function schema_heal(): array
 function schema_stamp(): void
 {
     $k = schema_quote('key');
+    $v = schema_quote('value');
     $existing = DB::one("SELECT id FROM settings WHERE $k = 'schema.version'");
     if ($existing) {
-        DB::run("UPDATE settings SET value = ? WHERE $k = 'schema.version'", [schema_version()]);
+        DB::run("UPDATE settings SET $v = ? WHERE $k = 'schema.version'", [schema_version()]);
     } else {
-        DB::insert('INSERT INTO settings (' . $k . ', value) VALUES (?,?)', ['schema.version', schema_version()]);
+        DB::insert("INSERT INTO settings ($k, $v) VALUES (?,?)", ['schema.version', schema_version()]);
     }
 }
 
@@ -725,7 +726,8 @@ function schema_uptodate(): bool
     }
     try {
         $k = schema_quote('key');
-        $stored = DB::val("SELECT value FROM settings WHERE $k = 'schema.version'");
+        $v = schema_quote('value');
+        $stored = DB::val("SELECT $v FROM settings WHERE $k = 'schema.version'");
     } catch (Throwable $e) {
         $stored = null;
     }

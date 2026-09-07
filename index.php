@@ -865,10 +865,10 @@ if ($reqPath === '/settings') {
             csrf_check();
             foreach (['numbering.prefix','numbering.tender_nit.pattern','numbering.bill.pattern','numbering.work_order.pattern','numbering.agreement.pattern','numbering.loa.pattern','contractor.expiry_warning_days'] as $k) {
                 if (post($k) !== null) {
-                    if (DB::one('SELECT id FROM settings WHERE key = ?', [$k])) {
-                        DB::run('UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?', [post($k), $k]);
+                    if (DB::one('SELECT id FROM settings WHERE ' . sql_ident('key') . ' = ?', [$k])) {
+                        DB::run('UPDATE settings SET ' . sql_ident('value') . ' = ?, updated_at = CURRENT_TIMESTAMP WHERE ' . sql_ident('key') . ' = ?', [post($k), $k]);
                     } else {
-                        DB::insert('INSERT INTO settings (key, value) VALUES (?,?)', [$k, post($k)]);
+                        DB::insert('INSERT INTO settings (' . sql_ident('key') . ', ' . sql_ident('value') . ') VALUES (?,?)', [$k, post($k)]);
                     }
                 }
             }
@@ -1824,7 +1824,7 @@ function notifications_html(array $user): string
 function settings_html(): string
 {
     $settings = [];
-    foreach (DB::all("SELECT * FROM settings WHERE key LIKE 'numbering.%' OR key = 'contractor.expiry_warning_days'") as $s) {
+    foreach (DB::all('SELECT * FROM settings WHERE ' . sql_ident('key') . " LIKE 'numbering.%' OR " . sql_ident('key') . " = 'contractor.expiry_warning_days'") as $s) {
         $settings[$s['key']] = $s['value'];
     }
     return '<div class="page-head"><h1>Settings</h1></div><div class="card">'

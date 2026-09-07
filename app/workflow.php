@@ -38,7 +38,7 @@ const DEFAULT_WORKFLOWS = [
 
 function workflow_config(string $entityType): array
 {
-    $stored = DB::one('SELECT value FROM settings WHERE key = ?', ['workflow.' . $entityType]);
+    $stored = DB::one('SELECT ' . sql_ident('value') . ' FROM settings WHERE ' . sql_ident('key') . ' = ?', ['workflow.' . $entityType]);
     if ($stored && $stored['value']) {
         $decoded = json_load($stored['value']);
         if ($decoded !== null) {
