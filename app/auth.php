@@ -32,13 +32,17 @@ function current_user(): ?array
     if (empty($_SESSION['user_id'])) {
         return null;
     }
+    static $cacheKey = null;
     static $user = null;
-    if ($user !== null) {
-        return $user;
-    }
-    $user = DB::one('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [$_SESSION['user_id']]);
-    if (!$user || !(int) $user['is_active']) {
-        $user = null;
+    // Cache keyed on the session user so a login (or a session change) later
+    // in the same request is honoured instead of returning a stale null.
+    $key = (int) $_SESSION['user_id'];
+    if ($cacheKey !== $key) {
+        $user = DB::one('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [$key]);
+        if (!$user || !(int) $user['is_active']) {
+            $user = null;
+        }
+        $cacheKey = $key;
     }
     return $user;
 }

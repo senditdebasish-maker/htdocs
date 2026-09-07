@@ -58,6 +58,50 @@ if (strpos($reqPath, '/index.php') === 0) {
 }
 $segments = $reqPath === '/' ? [] : explode('/', trim($reqPath, '/'));
 
+// ---------------------------------------------------------------------------
+// Global error handler. Converts AppError into a proper HTTP response
+// (redirect to login for 401, rendered page for 403/404/409/422/400) and
+// unexpected errors into a logged 500 — instead of a PHP fatal error.
+// ---------------------------------------------------------------------------
+set_exception_handler(function (Throwable $e) use ($reqPath): void {
+    try {
+        if ($e instanceof AppError) {
+            if ($e->status === 401) {
+                // Not signed in: remember where they were headed, then log in.
+                if ($reqPath !== '/login') {
+                    $_SESSION['login_redirect'] = $reqPath;
+                }
+                header('Location: ' . app_url('/login'));
+                exit;
+            }
+            $titles = [400 => 'Bad Request', 403 => 'Forbidden', 404 => 'Not Found', 409 => 'Conflict', 422 => 'Validation Error', 503 => 'Service Unavailable'];
+            $title = $titles[$e->status] ?? 'Error';
+            http_response_code($e->status);
+            render_page($title,
+                '<div class="card"><h1>' . e($title) . '</h1>'
+                . '<p class="muted">' . e($e->getMessage()) . '</p>'
+                . '<div class="actions"><a class="btn" href="' . e(app_url('/')) . '">Back to home</a></div></div>',
+                '', (bool) current_user());
+            exit;
+        }
+        error_log('Uncaught ' . get_class($e) . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+        http_response_code(500);
+        render_page('Server Error',
+            '<div class="card"><h1>Server Error</h1>'
+            . '<p class="muted">Something went wrong. The error has been logged for the administrator.</p>'
+            . '<div class="actions"><a class="btn" href="' . e(app_url('/')) . '">Back to home</a></div></div>',
+            '', (bool) current_user());
+        exit;
+    } catch (Throwable $fallback) {
+        // Never rethrow from the handler itself.
+        http_response_code(500);
+        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Server Error</title></head>'
+            . '<body style="font-family:sans-serif;padding:2rem"><h1>Server Error</h1>'
+            . '<p>An unexpected error occurred.</p></body></html>';
+        exit;
+    }
+});
+
 function seg(int $i): ?string
 {
     global $segments;
@@ -144,7 +188,14 @@ if ($reqPath === '/login') {
             csrf_check();
             $u = login_user((string) post('email'), (string) post('password'));
             flash_set('Welcome, ' . $u['user']['name'] . '.', 'success');
-            header('Location: ' . app_url('/'));
+            // Resume the page the user was headed to before signing in.
+            $dest = $_SESSION['login_redirect'] ?? null;
+            unset($_SESSION['login_redirect']);
+            if (is_string($dest) && $dest !== '' && $dest[0] === '/' && strpos($dest, '//') !== 0) {
+                header('Location: ' . app_url($dest));
+            } else {
+                header('Location: ' . app_url('/'));
+            }
             exit;
         }, '/login');
         exit;
