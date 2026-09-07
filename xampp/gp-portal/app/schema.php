@@ -456,59 +456,6 @@ function schema_tables(): array
     ];
 }
 
-/**
- * Map each table to the set of tables its foreign keys reference.
- * Keyed by table name, values are unique referenced-table names.
- */
-function schema_dependencies(): array
-{
-    $deps = [];
-    foreach (schema_tables() as $table => $cols) {
-        $deps[$table] = [];
-        foreach ($cols as $c) {
-            if ($c[0] === 'fk' && isset($c[2]) && is_string($c[2])) {
-                $deps[$table][] = $c[2];
-            }
-        }
-        $deps[$table] = array_values(array_unique($deps[$table]));
-    }
-    return $deps;
-}
-
-/**
- * Topologically ordered table names: a table is listed only after every table
- * it references. MySQL enforces that referenced tables already exist at CREATE
- * time (errno 150 otherwise); SQLite is lenient, so order matters for MySQL.
- * Falls back to declaration order on any unresolvable cycle.
- */
-function schema_table_order(): array
-{
-    $deps = schema_dependencies();
-    $order = [];
-    $remaining = array_keys($deps);
-    while ($remaining) {
-        $ready = [];
-        foreach ($remaining as $t) {
-            $pending = array_values(array_filter($deps[$t], function ($d) use ($remaining) {
-                return in_array($d, $remaining, true);
-            }));
-            if (!$pending) {
-                $ready[] = $t;
-            }
-        }
-        if (!$ready) {
-            // Should never happen for an acyclic schema; keep the rest as-is.
-            $order = array_merge($order, array_values($remaining));
-            break;
-        }
-        foreach ($ready as $t) {
-            $order[] = $t;
-            $remaining = array_values(array_diff($remaining, [$t]));
-        }
-    }
-    return $order;
-}
-
 /** Convert the DSL into CREATE TABLE statements for the active driver. */
 function schema_ddl(): array
 {
@@ -519,8 +466,7 @@ function schema_ddl(): array
         return $sqlite ? $id : '`' . $id . '`';
     };
     $out = [];
-    foreach (schema_table_order() as $table) {
-        $cols = schema_tables()[$table];
+    foreach (schema_tables() as $table => $cols) {
         $lines = [];
         $checks = [];
         $pks = [];
@@ -627,7 +573,7 @@ function create_tables(bool $drop = false): void
         } else {
             $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
         }
-        foreach (array_reverse(schema_table_order()) as $t) {
+        foreach (array_keys(schema_tables()) as $t) {
             $pdo->exec("DROP TABLE IF EXISTS $t");
         }
         if (DB::isSqlite()) {
