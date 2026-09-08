@@ -18,6 +18,7 @@ require_once __DIR__ . '/app/workflow.php';
 require_once __DIR__ . '/app/compliance.php';
 require_once __DIR__ . '/app/services.php';
 require_once __DIR__ . '/app/documents.php';
+require_once __DIR__ . '/app/backup.php';
 require_once __DIR__ . '/app/seed.php';
 require_once __DIR__ . '/app/view.php';
 require_once __DIR__ . '/app/installer.php';
@@ -136,12 +137,26 @@ function act(callable $fn, string $fallback = '/'): void
     } catch (AppError $e) {
         flash_set($e->getMessage(), 'danger');
         $ref = $_SERVER['HTTP_REFERER'] ?? '';
-        // Only allow same-site referers to avoid open redirects.
-        if ($ref !== '' && strpos($ref, base_path()) === 0 && $ref !== (isset($_SERVER['HTTP_HOST']) ? 'http://' . $_SERVER['HTTP_HOST'] : '') . base_path()) {
-            header('Location: ' . $ref);
-        } else {
-            header('Location: ' . app_url($fallback));
+        $safe = '';
+        if (is_string($ref) && $ref !== '') {
+            $parts = parse_url($ref);
+            if (is_array($parts)) {
+                $currentHost = strtolower($_SERVER['HTTP_HOST'] ?? '');
+                $refHost = '';
+                if (isset($parts['host'])) {
+                    $refHost = strtolower((string) $parts['host']) . (isset($parts['port']) ? ':' . (int) $parts['port'] : '');
+                }
+                if ($refHost === '' || $refHost === $currentHost) {
+                    $path = (string) ($parts['path'] ?? '/');
+                    $query = isset($parts['query']) ? '?' . (string) $parts['query'] : '';
+                    $bp = base_path();
+                    if ($bp === '' || $path === $bp || str_starts_with($path, $bp . '/')) {
+                        $safe = ($bp !== '' ? substr($path, strlen($bp)) : $path) . $query;
+                    }
+                }
+            }
         }
+        header('Location: ' . app_url($safe !== '' ? $safe : $fallback));
         exit;
     }
 }
@@ -212,13 +227,33 @@ if ($reqPath === '/logout') {
 // ===========================================================================
 // PUBLIC PORTAL (read-only)
 // ===========================================================================
-if ($reqPath === '/public') {
+if ($reqPath === '/public' || $reqPath === '/public/tenders') {
     render_page('Public Portal', public_list_html(), 'public', (bool) current_user());
     exit;
 }
 
 if (seg(0) === 'public' && seg(1) === 'tenders' && seg(2) !== null) {
     render_page('Public Tender', public_tender_html((int) seg(2)), 'public', (bool) current_user());
+    exit;
+}
+
+// Public access to published NIT PDFs only. All other document downloads are
+// handled below after authentication and RBAC/scope checks.
+if (seg(0) === 'documents' && is_numeric(seg(1) ?? '') && !current_user()) {
+    $doc = DB::one('SELECT * FROM documents WHERE id = ?', [(int) seg(1)]);
+    if (!$doc) { throw not_found('Document not found'); }
+    $publicNit = $doc['category'] === 'nit' && $doc['entity_type'] === 'tender' && $doc['entity_id']
+        && DB::one("SELECT id FROM tenders WHERE id = ? AND deleted_at IS NULL AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded','closed')", [(int) $doc['entity_id']]);
+    if (!$publicNit) { require_auth(); }
+    $file = document_file_path($doc);
+    if (!$file) { throw not_found('Document file not found'); }
+    audit_record('document.public_download', 'document', (int) $doc['id'], $doc['original_name']);
+    $mime = $doc['mime_type'] ?: 'application/octet-stream';
+    header('Content-Type: ' . $mime);
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Disposition: inline; filename="' . preg_replace('/[^A-Za-z0-9._ -]/', '_', $doc['original_name']) . '"');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
     exit;
 }
 
@@ -233,6 +268,163 @@ $user = require_auth();
 if ($reqPath === '/') {
     guard('report.view');
     render_page('Dashboard', dashboard_html($user), 'dashboard');
+    exit;
+}
+
+
+// ===========================================================================
+// PANCHAYAT / PLANNING MASTER DATA
+// ===========================================================================
+if ($reqPath === '/panchayat') {
+    if ($reqMethod === 'POST') {
+        act(function () use ($user) {
+            guard('panchayat.manage'); csrf_check();
+            $pid = (int) post('id', 0);
+            if ($pid <= 0) { throw validation('Panchayat id missing.'); }
+            $row = DB::one('SELECT * FROM panchayats WHERE id = ?', [$pid]);
+            if (!$row) { throw not_found('Panchayat not found'); }
+            scope_assert_row($row, $user, 'panchayat');
+            $allowed = ['state','district','block','gram_panchayat','gp_code','office_address','pin','phone','email','pradhan','upa_pradhan','panchayat_secretary','technical_officer','accounts_officer','letterhead_html','document_header_html','document_footer_html'];
+            $sets = []; $params = [];
+            foreach ($allowed as $f) {
+                if (post($f) !== null) { $sets[] = $f . ' = ?'; $params[] = post($f); }
+            }
+            if ($sets) {
+                $params[] = $pid;
+                DB::run('UPDATE panchayats SET ' . implode(', ', $sets) . ', updated_at = CURRENT_TIMESTAMP WHERE id = ?', $params);
+            }
+            audit_record('panchayat.update', 'panchayat', $pid, post('gram_panchayat'));
+            flash_set('Panchayat settings saved.', 'success');
+            header('Location: ' . app_url('/panchayat')); exit;
+        }, '/panchayat');
+        exit;
+    }
+    guard('panchayat.view');
+    render_page('Panchayat Settings', panchayat_settings_html($user), 'panchayat');
+    exit;
+}
+
+if ($reqPath === '/schemes') {
+    guard('scheme.view');
+    render_page('Schemes', schemes_html($user), 'schemes');
+    exit;
+}
+if ($reqPath === '/schemes/create' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('scheme.manage'); csrf_check();
+        $name = trim((string) post('name'));
+        if ($name === '') { throw validation('Scheme name is required.'); }
+        $code = trim((string) post('code')) ?: null;
+        if ($code && DB::one('SELECT id FROM schemes WHERE code = ?', [$code])) { throw conflict('Scheme code already exists.'); }
+        $id = DB::insert('INSERT INTO schemes (uid, name, code, sponsoring_authority, description, is_active) VALUES (?,?,?,?,?,1)',
+            [uid(), $name, $code, post('sponsoring_authority'), post('description')]);
+        audit_record('scheme.create', 'scheme', $id, $name);
+        flash_set('Scheme created.', 'success');
+        header('Location: ' . app_url('/schemes')); exit;
+    }, '/schemes');
+    exit;
+}
+
+if ($reqPath === '/funds') {
+    guard('scheme.view');
+    render_page('Funds', funds_html($user), 'funds');
+    exit;
+}
+if ($reqPath === '/funds/create' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('scheme.manage'); csrf_check();
+        $name = trim((string) post('name'));
+        if ($name === '') { throw validation('Fund name is required.'); }
+        $code = trim((string) post('code')) ?: null;
+        if ($code && DB::one('SELECT id FROM funds WHERE code = ?', [$code])) { throw conflict('Fund code already exists.'); }
+        $id = DB::insert('INSERT INTO funds (uid, name, code, funding_source, head_of_account, is_active) VALUES (?,?,?,?,?,1)',
+            [uid(), $name, $code, post('funding_source'), post('head_of_account')]);
+        audit_record('fund.create', 'fund', $id, $name);
+        flash_set('Fund created.', 'success');
+        header('Location: ' . app_url('/funds')); exit;
+    }, '/funds');
+    exit;
+}
+
+if ($reqPath === '/budgets') {
+    guard('scheme.view');
+    render_page('Budgets', budgets_html($user), 'budgets');
+    exit;
+}
+if ($reqPath === '/budgets/create' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('scheme.manage'); csrf_check();
+        $fy = DB::one('SELECT * FROM financial_years WHERE id = ?', [(int) post('fy_id')]);
+        if (!$fy) { throw validation('Select a valid financial year.'); }
+        if ($fy['status'] === 'closed') { throw conflict('Cannot add budget allocation to a closed financial year.'); }
+        $amount = money_in('sanctioned_amount');
+        if ($amount === null || $amount < 0) { throw validation('Budget amount must be zero or positive.'); }
+        $id = DB::insert('INSERT INTO budget_allocations (uid, panchayat_id, fy_id, scheme_id, fund_id, sanctioned_amount_minor) VALUES (?,?,?,?,?,?)',
+            [uid(), actor_panchayat_id($user), (int) $fy['id'], int_or_null(post('scheme_id')), int_or_null(post('fund_id')), $amount]);
+        audit_record('budget.create', 'budget', $id, 'Budget ' . $fy['label']);
+        flash_set('Budget allocation recorded.', 'success');
+        header('Location: ' . app_url('/budgets')); exit;
+    }, '/budgets');
+    exit;
+}
+
+if ($reqPath === '/procurement-plans') {
+    guard('plan.view');
+    render_page('Procurement Plans', procurement_plans_html($user), 'plans');
+    exit;
+}
+if ($reqPath === '/procurement-plans/create' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('plan.manage'); csrf_check();
+        $fy = DB::one('SELECT * FROM financial_years WHERE id = ?', [(int) post('fy_id')]);
+        if (!$fy) { throw validation('Select a valid financial year.'); }
+        if ($fy['status'] === 'closed') { throw conflict('Cannot create a procurement plan in a closed financial year.'); }
+        $work = trim((string) post('work_name'));
+        if ($work === '') { throw validation('Work name is required.'); }
+        $amount = money_in('estimated_amount');
+        if ($amount === null || $amount <= 0) { throw validation('Estimated amount must be positive.'); }
+        $id = DB::insert('INSERT INTO procurement_plans (uid, panchayat_id, fy_id, scheme_id, fund_id, work_name, estimated_amount_minor, procurement_method, expected_date, responsible_officer, budget_provision, remarks, status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [uid(), actor_panchayat_id($user), (int) $fy['id'], int_or_null(post('scheme_id')), int_or_null(post('fund_id')), $work, $amount, post('procurement_method'), date_or_null(post('expected_date')), post('responsible_officer'), post('budget_provision'), post('remarks'), 'planned', (int) $user['id']]);
+        audit_record('plan.create', 'procurement_plan', $id, $work);
+        flash_set('Procurement plan created.', 'success');
+        header('Location: ' . app_url('/procurement-plans')); exit;
+    }, '/procurement-plans');
+    exit;
+}
+if (seg(0) === 'procurement-plans' && is_numeric(seg(1) ?? '') && seg(2) === 'project' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('plan.manage'); csrf_check();
+        $plan = DB::one('SELECT * FROM procurement_plans WHERE id = ?', [(int) seg(1)]);
+        if (!$plan) { throw not_found('Procurement plan not found'); }
+        scope_assert_row($plan, $user, 'procurement plan');
+        if (!empty($plan['project_id'])) { header('Location: ' . app_url('/projects/' . $plan['project_id'])); exit; }
+        $projectId = DB::insert('INSERT INTO projects (uid, panchayat_id, fy_id, scheme_id, fund_id, work_name, description, estimate_amount_minor, sanctioned_amount_minor, status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            [uid(), $plan['panchayat_id'] ?? actor_panchayat_id($user), (int) $plan['fy_id'], $plan['scheme_id'], $plan['fund_id'], $plan['work_name'], 'Created from procurement plan #' . $plan['id'], (int) $plan['estimated_amount_minor'], (int) $plan['estimated_amount_minor'], 'planned', (int) $user['id']]);
+        DB::run("UPDATE procurement_plans SET project_id = ?, status = 'initiated' WHERE id = ?", [$projectId, (int) $plan['id']]);
+        audit_record('plan.convert_project', 'procurement_plan', (int) $plan['id'], $plan['work_name'], ['newValue' => ['project_id' => $projectId]]);
+        flash_set('Project created from procurement plan.', 'success');
+        header('Location: ' . app_url('/projects/' . $projectId)); exit;
+    }, '/procurement-plans');
+    exit;
+}
+if (seg(0) === 'procurement-plans' && is_numeric(seg(1) ?? '') && seg(2) === 'tender' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('plan.manage'); csrf_check();
+        $plan = DB::one('SELECT * FROM procurement_plans WHERE id = ?', [(int) seg(1)]);
+        if (!$plan) { throw not_found('Procurement plan not found'); }
+        scope_assert_row($plan, $user, 'procurement plan');
+        $projectId = (int) ($plan['project_id'] ?? 0);
+        if ($projectId <= 0) {
+            $projectId = DB::insert('INSERT INTO projects (uid, panchayat_id, fy_id, scheme_id, fund_id, work_name, description, estimate_amount_minor, sanctioned_amount_minor, status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                [uid(), $plan['panchayat_id'] ?? actor_panchayat_id($user), (int) $plan['fy_id'], $plan['scheme_id'], $plan['fund_id'], $plan['work_name'], 'Created from procurement plan #' . $plan['id'], (int) $plan['estimated_amount_minor'], (int) $plan['estimated_amount_minor'], 'planned', (int) $user['id']]);
+            DB::run("UPDATE procurement_plans SET project_id = ?, status = 'initiated' WHERE id = ?", [$projectId, (int) $plan['id']]);
+        }
+        $t = tender_create(['fy_id' => (int) $plan['fy_id'], 'project_id' => $projectId, 'scheme_id' => $plan['scheme_id'], 'fund_id' => $plan['fund_id'], 'tender_type' => 'open', 'procurement_category' => 'works', 'procurement_method' => $plan['procurement_method'], 'title' => $plan['work_name'], 'work_name' => $plan['work_name']], $user);
+        DB::run("UPDATE procurement_plans SET status = 'tender_created' WHERE id = ?", [(int) $plan['id']]);
+        audit_record('plan.convert_tender', 'procurement_plan', (int) $plan['id'], $plan['work_name'], ['newValue' => ['tender_id' => $t['id']]]);
+        flash_set('Tender created from procurement plan.', 'success');
+        header('Location: ' . app_url('/tenders/' . $t['id'])); exit;
+    }, '/procurement-plans');
     exit;
 }
 
@@ -317,11 +509,16 @@ if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'boq' && $req
         guard('boq.manage');
         csrf_check();
         $tid = (int) seg(1);
-        tender_get($tid);
+        $tender = tender_get($tid);
+        if ($tender['status'] !== 'draft') { throw conflict('BOQ can be edited only while the tender is draft.'); }
+        if (trim((string) post('description')) === '') { throw validation('BOQ description is required.'); }
+        $qty = (float) post('quantity', 0);
+        $rate = to_minor((string) post('estimated_rate'));
+        if ($qty <= 0 || $rate <= 0) { throw validation('BOQ quantity and estimated rate must be positive.'); }
         DB::insert(
-            'INSERT INTO boq_items (uid, tender_id, item_no, group_name, description, specification, unit, quantity, estimated_rate_minor, tax_pct, sort_order)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-            [uid(), $tid, post('item_no') ?: (string) ((int) DB::val('SELECT COUNT(*) FROM boq_items WHERE tender_id = ?', [$tid]) + 1), post('group_name'), post('description'), post('specification'), post('unit'), (float) post('quantity', 0), to_minor((string) post('estimated_rate')), (float) post('tax_pct', 0), (int) post('sort_order', 0)]
+            'INSERT INTO boq_items (uid, panchayat_id, tender_id, item_no, group_name, description, specification, unit, quantity, estimated_rate_minor, tax_pct, sort_order)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [uid(), $tender['panchayat_id'] ?? actor_panchayat_id($user), $tid, post('item_no') ?: (string) ((int) DB::val('SELECT COUNT(*) FROM boq_items WHERE tender_id = ?', [$tid]) + 1), post('group_name'), post('description'), post('specification'), post('unit'), $qty, $rate, (float) post('tax_pct', 0), (int) post('sort_order', 0)]
         );
         flash_set('BOQ item added.', 'success');
         header('Location: ' . app_url('/tenders/' . $tid));
@@ -365,6 +562,57 @@ if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'nit' && $req
         guard('nit.manage'); csrf_check();
         $r = tender_generate_nit((int) seg(1), $user);
         flash_set('NIT generated. <a href="' . app_url('/documents/' . $r['document']['id']) . '">View NIT</a>', 'success');
+        header('Location: ' . app_url('/tenders/' . seg(1))); exit;
+    }, '/tenders');
+    exit;
+}
+
+
+if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'tender-document' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('nit.manage'); csrf_check();
+        $doc = document_generate_tender_document((int) seg(1), $user);
+        flash_set('Tender document generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
+        header('Location: ' . app_url('/tenders/' . seg(1))); exit;
+    }, '/tenders');
+    exit;
+}
+
+if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'boq-pdf' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('boq.manage'); csrf_check();
+        $doc = document_generate_boq((int) seg(1), $user);
+        flash_set('BOQ PDF generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
+        header('Location: ' . app_url('/tenders/' . seg(1))); exit;
+    }, '/tenders');
+    exit;
+}
+
+if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'technical-evaluation-pdf' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('technical_eval.manage'); csrf_check();
+        $doc = document_generate_technical_evaluation((int) seg(1), $user);
+        flash_set('Technical evaluation PDF generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
+        header('Location: ' . app_url('/tenders/' . seg(1))); exit;
+    }, '/tenders');
+    exit;
+}
+
+if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'comparative-pdf' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('comparative.view'); csrf_check();
+        $doc = document_generate_comparative((int) seg(1), $user);
+        flash_set('Comparative statement PDF generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
+        header('Location: ' . app_url('/tenders/' . seg(1))); exit;
+    }, '/tenders');
+    exit;
+}
+
+if (seg(0) === 'tenders' && is_numeric(seg(1) ?? '') && seg(2) === 'complete-file' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('document.download'); csrf_check();
+        $doc = document_generate_complete_tender_file((int) seg(1), $user);
+        flash_set('Complete tender file index generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
         header('Location: ' . app_url('/tenders/' . seg(1))); exit;
     }, '/tenders');
     exit;
@@ -578,17 +826,28 @@ if ($reqPath === '/projects/new') {
 if ($reqPath === '/projects/create' && $reqMethod === 'POST') {
     act(function () use ($user) {
         guard('project.manage'); csrf_check();
-        $fy = fy_resolve_for_date(today_iso());
+        $fy = DB::one('SELECT * FROM financial_years WHERE id = ?', [(int) post('fy_id')]);
+        if (!$fy) { throw validation('Select a valid financial year.'); }
+        if ($fy['status'] === 'closed') { throw conflict('Cannot create a project in a closed financial year.'); }
+        if (trim((string) post('work_name')) === '') { throw validation('Work name is required.'); }
+        $adminAmount = money_in('admin_approval_amount');
+        $techAmount = money_in('tech_sanction_amount');
+        $estimateAmount = money_in('estimate_amount');
+        $sanctionedAmount = money_in('sanctioned_amount');
+        if ($estimateAmount === null || $estimateAmount <= 0) { throw validation('Estimate amount must be positive.'); }
+        foreach (['Admin approval amount' => $adminAmount, 'Technical sanction amount' => $techAmount, 'Sanctioned amount' => $sanctionedAmount] as $label => $amount) {
+            if ($amount !== null && $amount < 0) { throw validation($label . ' cannot be negative.'); }
+        }
         $id = DB::insert(
-            'INSERT INTO projects (uid, fy_id, scheme_id, fund_id, work_name, description, location, project_code,
+            'INSERT INTO projects (uid, panchayat_id, fy_id, scheme_id, fund_id, work_name, description, location, project_code,
                administrative_approval_no, administrative_approval_date, administrative_approval_authority, administrative_approval_amount_minor,
                technical_sanction_no, technical_sanction_date, technical_sanction_authority, technical_sanction_amount_minor,
                estimate_amount_minor, sanctioned_amount_minor, head_of_account, status, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            [uid(), (int) post('fy_id', $fy['id']), int_or_null(post('scheme_id')), int_or_null(post('fund_id')), post('work_name'), post('description'), post('location'), post('project_code'),
-             post('admin_approval_no'), post('admin_approval_date'), post('admin_approval_authority'), money_in('admin_approval_amount'),
-             post('tech_sanction_no'), post('tech_sanction_date'), post('tech_sanction_authority'), money_in('tech_sanction_amount'),
-             money_in('estimate_amount'), money_in('sanctioned_amount'), post('head_of_account'), 'planned', (int) $user['id']]
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [uid(), actor_panchayat_id($user), (int) $fy['id'], int_or_null(post('scheme_id')), int_or_null(post('fund_id')), post('work_name'), post('description'), post('location'), post('project_code') ?: null,
+             post('admin_approval_no'), date_or_null(post('admin_approval_date')), post('admin_approval_authority'), $adminAmount,
+             post('tech_sanction_no'), date_or_null(post('tech_sanction_date')), post('tech_sanction_authority'), $techAmount,
+             $estimateAmount, $sanctionedAmount, post('head_of_account'), 'planned', (int) $user['id']]
         );
         audit_record('project.create', 'project', $id, post('work_name'));
         flash_set('Project created.', 'success');
@@ -698,6 +957,18 @@ if (seg(0) === 'bills' && is_numeric(seg(1) ?? '') && seg(2) === 'workflow' && $
     exit;
 }
 
+
+if (seg(0) === 'bills' && is_numeric(seg(1) ?? '') && seg(2) === 'pdf' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('bill.manage'); csrf_check();
+        $bid = (int) seg(1);
+        $doc = document_generate_bill($bid, $user);
+        flash_set('Bill PDF generated. <a href="' . app_url('/documents/' . $doc['id']) . '">View</a>', 'success');
+        header('Location: ' . app_url('/projects/' . DB::val('SELECT project_id FROM bills WHERE id = ?', [$bid]))); exit;
+    }, '/projects');
+    exit;
+}
+
 if (seg(0) === 'bills' && is_numeric(seg(1) ?? '') && seg(2) === 'payment' && $reqMethod === 'POST') {
     act(function () use ($user) {
         guard('payment.manage'); csrf_check();
@@ -798,13 +1069,18 @@ if ($reqPath === '/reports/reconciliation') {
     render_page('Reconciliation', reconciliation_html(), 'reports');
     exit;
 }
-if ($reqPath === '/reports/tenders.csv') {
+if (in_array($reqPath, ['/reports/tenders.csv', '/reports/tenders-csv'], true)) {
     guard('report.export');
+    $fyId = (int) ($_GET['fy_id'] ?? 0);
+    $scope = scope_condition('t');
+    $where = 'WHERE t.deleted_at IS NULL' . $scope['sql'];
+    $params = $scope['params'];
+    if ($fyId) { $where .= ' AND t.fy_id = ?'; $params[] = $fyId; }
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="tenders.csv"');
     $out = fopen('php://output', 'w');
     fputcsv($out, ['tender_number', 'fy', 'work_name', 'status', 'estimated_cost', 'tender_value', 'publication_date', 'bid_close_date']);
-    foreach (DB::all('SELECT t.*, f.label fy_label FROM tenders t LEFT JOIN financial_years f ON f.id = t.fy_id WHERE t.deleted_at IS NULL ORDER BY t.id') as $t) {
+    foreach (DB::all("SELECT t.*, f.label fy_label FROM tenders t LEFT JOIN financial_years f ON f.id = t.fy_id $where ORDER BY t.id", $params) as $t) {
         fputcsv($out, [
             $t['tender_number'], $t['fy_label'], $t['work_name'] ?: $t['title'], $t['status'],
             from_minor($t['estimated_cost_minor']), from_minor($t['tender_value_minor']),
@@ -812,6 +1088,35 @@ if ($reqPath === '/reports/tenders.csv') {
         ]);
     }
     fclose($out);
+    exit;
+}
+
+if (in_array($reqPath, ['/reports/tenders.pdf', '/reports/tenders-pdf'], true)) {
+    guard('report.export');
+    $fyId = (int) ($_GET['fy_id'] ?? 0);
+    $scope = scope_condition('t');
+    $where = 'WHERE t.deleted_at IS NULL' . $scope['sql'];
+    $params = $scope['params'];
+    if ($fyId) { $where .= ' AND t.fy_id = ?'; $params[] = $fyId; }
+    $rows = DB::all("SELECT t.*, f.label fy_label FROM tenders t LEFT JOIN financial_years f ON f.id = t.fy_id $where ORDER BY t.id", $params);
+    $lines = ['Tender Register', 'Generated: ' . date('Y-m-d H:i:s'), ''];
+    foreach ($rows as $t) {
+        $lines[] = $t['tender_number'] . ' | FY ' . ($t['fy_label'] ?? '-') . ' | ' . ($t['work_name'] ?: $t['title']);
+        $lines[] = 'Status: ' . $t['status'] . ' | Estimate: ' . inr($t['estimated_cost_minor']) . ' | Tender value: ' . inr($t['tender_value_minor']);
+        $lines[] = 'Publication: ' . ($t['publication_date'] ?: '-') . ' | Bid close: ' . ($t['bid_close_date'] ?: '-');
+        $lines[] = '';
+    }
+    if (!$rows) { $lines[] = 'No tender records found for the selected filters.'; }
+    if (!is_dir(GENERATED_DIR)) { @mkdir(GENERATED_DIR, 0775, true); }
+    $tmp = tempnam(GENERATED_DIR, 'tender-report-');
+    if ($tmp === false) { throw err(500, 'REPORT_TEMP_FAILED', 'Unable to create report file.'); }
+    doc_create_simple_pdf(implode("\n", $lines), 'Tender Register', $tmp);
+    header('Content-Type: application/pdf');
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Disposition: attachment; filename="tender-register.pdf"');
+    header('Content-Length: ' . filesize($tmp));
+    readfile($tmp);
+    @unlink($tmp);
     exit;
 }
 
@@ -864,14 +1169,36 @@ if ($reqPath === '/users/create' && $reqMethod === 'POST') {
             throw conflict('A user with this email already exists');
         }
         $pass = (string) post('password');
-        if (strlen($pass) < 8) {
-            throw validation('Password must be at least 8 characters');
+        if (strlen($pass) < 10 || !preg_match('/[A-Z]/', $pass) || !preg_match('/[a-z]/', $pass) || !preg_match('/[0-9]/', $pass)) {
+            throw validation('Password must be at least 10 characters and include upper-case, lower-case and a number.');
+        }
+        $targetPanchayat = int_or_null(post('panchayat_id'));
+        if ((int) ($user['is_global_admin'] ?? 0) !== 1) {
+            $targetPanchayat = actor_panchayat_id($user);
+            if ($targetPanchayat === null) { throw forbidden('Panchayat-scoped administrators must belong to a Panchayat before creating users.'); }
+        }
+        $roleId = (int) post('role_id');
+        $role = DB::one('SELECT * FROM roles WHERE id = ?', [$roleId]);
+        if (!$role) { throw validation('Selected role does not exist.'); }
+        $isGlobalAdmin = 0;
+        if ($role['code'] === 'super_admin') {
+            if ((int) ($user['is_global_admin'] ?? 0) !== 1) {
+                throw forbidden('Only a global administrator can assign the Super Admin role.');
+            }
+            $targetPanchayat = null;
+            $isGlobalAdmin = 1;
+        } else {
+            if ($targetPanchayat === null) {
+                throw validation('Panchayat is required for non-global users.');
+            }
+            if (!DB::one('SELECT id FROM panchayats WHERE id = ?', [$targetPanchayat])) {
+                throw validation('Selected Panchayat does not exist.');
+            }
         }
         $id = DB::insert(
-            'INSERT INTO users (uid, email, password_hash, name, designation, panchayat_id, is_active) VALUES (?,?,?,?,?,?,1)',
-            [uid(), $email, password_hash($pass, PASSWORD_DEFAULT), post('name'), post('designation'), int_or_null(post('panchayat_id'))]
+            'INSERT INTO users (uid, email, password_hash, name, designation, panchayat_id, is_global_admin, is_active) VALUES (?,?,?,?,?,?,?,1)',
+            [uid(), $email, password_hash_secure($pass), post('name'), post('designation'), $targetPanchayat, $isGlobalAdmin]
         );
-        $roleId = (int) post('role_id');
         DB::insert('INSERT INTO user_roles (user_id, role_id) VALUES (?,?)', [$id, $roleId]);
         audit_record('user.create', 'user', $id, $email);
         flash_set('User created.', 'success');
@@ -907,6 +1234,54 @@ if ($reqPath === '/notifications/read' && $reqMethod === 'POST') {
 }
 
 // ===========================================================================
+// BACKUP / RESTORE
+// ===========================================================================
+if ($reqPath === '/backups') {
+    $u = guard('backup.manage');
+    render_page('Backups', backups_html($u), 'backups');
+    exit;
+}
+
+if ($reqPath === '/backups/create' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('backup.manage'); csrf_check();
+        $b = backup_create($user);
+        flash_set('Backup created: ' . $b['file_name'], 'success');
+        header('Location: ' . app_url('/backups'));
+        exit;
+    }, '/backups');
+    exit;
+}
+
+if (seg(0) === 'backups' && is_numeric(seg(1) ?? '') && seg(2) === 'restore' && $reqMethod === 'POST') {
+    act(function () use ($user) {
+        guard('backup.manage'); csrf_check();
+        if ((string) post('confirm') !== 'RESTORE') {
+            throw validation('Type RESTORE to confirm full database restore.');
+        }
+        backup_restore((int) seg(1), $user);
+        flash_set('Backup restored. You may need to sign in again if user/session data changed.', 'success');
+        header('Location: ' . app_url('/backups'));
+        exit;
+    }, '/backups');
+    exit;
+}
+
+if (seg(0) === 'backups' && is_numeric(seg(1) ?? '') && seg(2) === null) {
+    $u = guard('backup.manage');
+    backup_require_global_admin($u);
+    $b = DB::one('SELECT * FROM backups WHERE id = ?', [(int) seg(1)]);
+    if (!$b) { throw not_found('Backup not found'); }
+    $file = backup_file_path((string) $b['file_name']);
+    audit_record('backup.download', 'backup', (int) $b['id'], (string) $b['file_name']);
+    header('Content-Type: application/json');
+    header('Content-Disposition: attachment; filename="' . backup_safe_file_name((string) $b['file_name']) . '"');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
+    exit;
+}
+
+// ===========================================================================
 // SETTINGS
 // ===========================================================================
 if ($reqPath === '/settings') {
@@ -933,6 +1308,35 @@ if ($reqPath === '/settings') {
 }
 
 // ===========================================================================
+// DOCUMENTS
+// ===========================================================================
+if ($reqPath === '/documents') {
+    guard('document.view');
+    render_page('Documents', documents_list_html($user), 'documents');
+    exit;
+}
+
+if ($reqPath === '/documents/upload') {
+    guard('document.upload');
+    if ($reqMethod === 'POST') {
+        act(function () use ($user) {
+            csrf_check();
+            $doc = document_upload($_FILES['document'] ?? [], [
+                'entity_type' => post('entity_type'),
+                'entity_id' => post('entity_id'),
+                'category' => post('category', 'supporting'),
+            ], $user);
+            flash_set('Document uploaded: ' . $doc['original_name'], 'success');
+            header('Location: ' . app_url('/documents'));
+            exit;
+        }, '/documents/upload');
+        exit;
+    }
+    render_page('Upload document', document_upload_html(), 'documents');
+    exit;
+}
+
+// ===========================================================================
 // DOCUMENTS (download)
 // ===========================================================================
 if (seg(0) === 'documents' && is_numeric(seg(1) ?? '')) {
@@ -940,30 +1344,27 @@ if (seg(0) === 'documents' && is_numeric(seg(1) ?? '')) {
     if (!$doc) {
         throw not_found('Document not found');
     }
-    if ($doc['category'] === 'nit' && !current_user()) {
-        // Generated NIT is viewable publicly; other categories require login.
-    } else {
+    $currentViewer = current_user();
+    $publicNit = false;
+    if (!$currentViewer && $doc['category'] === 'nit' && $doc['entity_type'] === 'tender' && $doc['entity_id']) {
+        $publicNit = (bool) DB::one("SELECT id FROM tenders WHERE id = ? AND deleted_at IS NULL AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded','closed')", [(int) $doc['entity_id']]);
+    }
+    if (!$publicNit) {
         guard('document.download');
+        scope_assert_row($doc, $currentViewer ?: $user, 'document');
     }
-    $file = null;
-    if ($doc['stored_name'] && $doc['mime_type'] === 'text/html' && is_file(GENERATED_DIR . '/' . $doc['stored_name'])) {
-        $file = GENERATED_DIR . '/' . $doc['stored_name'];
-    } elseif ($doc['stored_name'] && is_file(UPLOADS_DIR . '/' . $doc['stored_name'])) {
-        $file = UPLOADS_DIR . '/' . $doc['stored_name'];
-    }
+    $file = document_file_path($doc);
     if (!$file) {
         throw not_found('Document file not found');
     }
     audit_record('document.download', 'document', (int) $doc['id'], $doc['original_name']);
-    header('Content-Type: ' . ($doc['mime_type'] ?: 'application/octet-stream'));
-    if (strpos($doc['mime_type'] ?: '', 'text/html') !== false) {
-        header('Content-Disposition: inline; filename="' . $doc['original_name'] . '"');
-        readfile($file);
-    } else {
-        header('Content-Disposition: attachment; filename="' . $doc['original_name'] . '"');
-        header('Content-Length: ' . filesize($file));
-        readfile($file);
-    }
+    $mime = $doc['mime_type'] ?: 'application/octet-stream';
+    $inline = in_array($mime, ['application/pdf', 'text/plain', 'text/csv'], true) || str_starts_with($mime, 'image/');
+    header('Content-Type: ' . $mime);
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment') . '; filename="' . preg_replace('/[^A-Za-z0-9._ -]/', '_', $doc['original_name']) . '"');
+    header('Content-Length: ' . filesize($file));
+    readfile($file);
     exit;
 }
 
@@ -999,7 +1400,7 @@ function dashboard_html(array $user): string
         . '</div>';
     $cards .= '<div class="grid grid-4" style="margin-top:14px">'
         . stat_card(inr($d['awards']['awardedMinor'] ?? 0), 'Awarded value', 'awards to date')
-        . stat_card((string) ($d['complianceIssues'] ?? 0), 'Compliance issues', 'blocking/warning')
+        . stat_card((string) ($d['complianceIssues'] ?? 0), 'Compliance issues', 'blocking/warning/verification')
         . stat_card((string) ($d['pendingApprovals'] ?? 0), 'Pending approvals', 'workflow steps')
         . stat_card(inr($d['tenders']['tender_value'] ?? 0), 'Tender value', 'published tenders')
         . '</div>';
@@ -1033,11 +1434,135 @@ function fy_filter_form(?int $selected): string
     return '<form method="get" action="' . e(app_url('/')) . '" class="actions">' . h_select('Financial year', 'fy_id', $opts, $selected) . h_submit('Filter', 'btn-outline') . '</form>';
 }
 
+
+function panchayat_settings_html(array $user): string
+{
+    $p = current_panchayat();
+    if (!$p) {
+        return '<div class="card"><h1>Panchayat Settings</h1><p class="muted">No Panchayat exists yet. Run the installer/seed to create the initial Panchayat configuration.</p></div>';
+    }
+    $canEdit = user_has_permission($user, 'panchayat.manage');
+    $form = '<div class="card"><h1>Panchayat Settings</h1>';
+    $form .= '<p class="muted">Configure the local office identity used on generated documents. This portal does not represent itself as the official Government of West Bengal e-procurement platform.</p>';
+    if (!$canEdit) {
+        return $form . '<dl class="dl">'
+            . dt_dd('State', e($p['state'])) . dt_dd('District', e($p['district'])) . dt_dd('Block', e($p['block']))
+            . dt_dd('Gram Panchayat', e($p['gram_panchayat'])) . dt_dd('GP Code', e($p['gp_code']))
+            . dt_dd('Office Address', e($p['office_address'])) . dt_dd('Phone', e($p['phone'])) . dt_dd('Email', e($p['email'])) . '</dl></div>';
+    }
+    $form .= h_form_open('/panchayat', 'post') . '<input type="hidden" name="id" value="' . (int) $p['id'] . '">'
+        . '<div class="field-row">' . h_input('State', 'state', $p['state'], 'text', true) . h_input('District', 'district', $p['district']) . '</div>'
+        . '<div class="field-row">' . h_input('Block', 'block', $p['block']) . h_input('Gram Panchayat', 'gram_panchayat', $p['gram_panchayat'], 'text', true) . '</div>'
+        . '<div class="field-row">' . h_input('GP Code', 'gp_code', $p['gp_code']) . h_input('PIN', 'pin', $p['pin']) . '</div>'
+        . h_textarea('Office Address', 'office_address', $p['office_address'], 3)
+        . '<div class="field-row">' . h_input('Official phone', 'phone', $p['phone']) . h_input('Official email', 'email', $p['email'], 'email') . '</div>'
+        . '<div class="field-row">' . h_input('Pradhan', 'pradhan', $p['pradhan']) . h_input('Upa-Pradhan', 'upa_pradhan', $p['upa_pradhan']) . '</div>'
+        . '<div class="field-row">' . h_input('Panchayat Secretary', 'panchayat_secretary', $p['panchayat_secretary']) . h_input('Technical Officer', 'technical_officer', $p['technical_officer']) . '</div>'
+        . h_input('Accounts Officer', 'accounts_officer', $p['accounts_officer'])
+        . h_textarea('Letterhead HTML / text', 'letterhead_html', $p['letterhead_html'], 3)
+        . h_textarea('Document header', 'document_header_html', $p['document_header_html'], 3)
+        . h_textarea('Document footer', 'document_footer_html', $p['document_footer_html'], 3)
+        . h_submit('Save Panchayat settings', 'btn-primary') . '</form></div>';
+    return $form;
+}
+
+function schemes_html(array $user): string
+{
+    $rows = [];
+    foreach (DB::all('SELECT * FROM schemes ORDER BY name') as $s) {
+        $rows[] = [e($s['name']), e($s['code'] ?: '—'), e($s['sponsoring_authority'] ?: '—'), (int) $s['is_active'] ? '<span class="badge badge-active">ACTIVE</span>' : '<span class="badge badge-cancelled">INACTIVE</span>'];
+    }
+    $form = user_has_permission($user, 'scheme.manage')
+        ? '<div class="card"><h2>Add Scheme</h2>' . h_form_open('/schemes/create', 'post')
+            . '<div class="field-row">' . h_input('Scheme name', 'name', '', 'text', true) . h_input('Scheme code', 'code') . '</div>'
+            . h_input('Department / authority', 'sponsoring_authority')
+            . h_textarea('Description', 'description', '', 2)
+            . h_submit('Create Scheme', 'btn-primary') . '</form></div>'
+        : '';
+    return '<div class="page-head"><h1>Schemes</h1>' . h_link('Funds', '/funds', 'btn-outline') . h_link('Budgets', '/budgets', 'btn-outline') . '</div>' . $form
+        . h_table(['Scheme', 'Code', 'Authority', 'Status'], $rows);
+}
+
+function funds_html(array $user): string
+{
+    $rows = [];
+    foreach (DB::all('SELECT * FROM funds ORDER BY name') as $f) {
+        $rows[] = [e($f['name']), e($f['code'] ?: '—'), e($f['funding_source'] ?: '—'), e($f['head_of_account'] ?: '—'), (int) $f['is_active'] ? '<span class="badge badge-active">ACTIVE</span>' : '<span class="badge badge-cancelled">INACTIVE</span>'];
+    }
+    $form = user_has_permission($user, 'scheme.manage')
+        ? '<div class="card"><h2>Add Fund</h2>' . h_form_open('/funds/create', 'post')
+            . '<div class="field-row">' . h_input('Fund name', 'name', '', 'text', true) . h_input('Fund code', 'code') . '</div>'
+            . '<div class="field-row">' . h_input('Funding source', 'funding_source') . h_input('Head of account', 'head_of_account') . '</div>'
+            . h_submit('Create Fund', 'btn-primary') . '</form></div>'
+        : '';
+    return '<div class="page-head"><h1>Funds</h1>' . h_link('Schemes', '/schemes', 'btn-outline') . h_link('Budgets', '/budgets', 'btn-outline') . '</div>' . $form
+        . h_table(['Fund', 'Code', 'Source', 'Head of Account', 'Status'], $rows);
+}
+
+function budgets_html(array $user): string
+{
+    $fyOpts = []; foreach (fy_list() as $f) { $fyOpts[$f['id']] = $f['label']; }
+    $schemeOpts = []; foreach (DB::all('SELECT id, name FROM schemes ORDER BY name') as $s) { $schemeOpts[$s['id']] = $s['name']; }
+    $fundOpts = []; foreach (DB::all('SELECT id, name FROM funds ORDER BY name') as $f) { $fundOpts[$f['id']] = $f['name']; }
+    $scope = scope_condition('ba');
+    $rows = [];
+    foreach (DB::all('SELECT ba.*, fy.label fy_label, s.name scheme_name, f.name fund_name FROM budget_allocations ba LEFT JOIN financial_years fy ON fy.id=ba.fy_id LEFT JOIN schemes s ON s.id=ba.scheme_id LEFT JOIN funds f ON f.id=ba.fund_id WHERE 1=1' . $scope['sql'] . ' ORDER BY fy.start_date DESC, ba.id DESC', $scope['params']) as $b) {
+        $committed = (int) DB::val('SELECT COALESCE(SUM(tender_value_minor),0) FROM tenders WHERE fy_id = ? AND deleted_at IS NULL AND status NOT IN (\'cancelled\')' . panchayat_scope_sql(), [(int) $b['fy_id']]);
+        $paid = (int) DB::val('SELECT COALESCE(SUM(net_amount_minor),0) FROM payments WHERE fy_id = ? AND status = \'recorded\'' . panchayat_scope_sql(), [(int) $b['fy_id']]);
+        $rows[] = [e($b['fy_label']), e($b['scheme_name'] ?: '—'), e($b['fund_name'] ?: '—'), '<span class="num">' . h_money($b['sanctioned_amount_minor']) . '</span>', '<span class="num">' . h_money($committed) . '</span>', '<span class="num">' . h_money($paid) . '</span>', '<span class="num">' . h_money((int) $b['sanctioned_amount_minor'] - $paid) . '</span>'];
+    }
+    $form = user_has_permission($user, 'scheme.manage')
+        ? '<div class="card"><h2>Add Budget Allocation</h2>' . h_form_open('/budgets/create', 'post')
+            . '<div class="field-row">' . h_select('Financial year', 'fy_id', $fyOpts, fy_current() ? fy_current()['id'] : null, true) . h_select('Scheme', 'scheme_id', $schemeOpts) . '</div>'
+            . '<div class="field-row">' . h_select('Fund', 'fund_id', $fundOpts) . h_input('Sanctioned amount (₹)', 'sanctioned_amount', '', 'number', true) . '</div>'
+            . h_submit('Record Budget', 'btn-primary') . '</form></div>'
+        : '';
+    return '<div class="page-head"><h1>Budgets</h1>' . h_link('Schemes', '/schemes', 'btn-outline') . h_link('Funds', '/funds', 'btn-outline') . '</div>' . $form
+        . '<div class="card"><p class="muted">Budget figures are stored as allocations. Tender commitments, payments and balances below are calculated from source records.</p></div>'
+        . h_table(['FY', 'Scheme', 'Fund', 'Budget', 'Tender Commitments', 'Paid', 'Remaining vs Paid'], $rows);
+}
+
+function procurement_plans_html(array $user): string
+{
+    $fyOpts = []; foreach (fy_list() as $f) { $fyOpts[$f['id']] = $f['label']; }
+    $schemeOpts = []; foreach (DB::all('SELECT id, name FROM schemes ORDER BY name') as $s) { $schemeOpts[$s['id']] = $s['name']; }
+    $fundOpts = []; foreach (DB::all('SELECT id, name FROM funds ORDER BY name') as $f) { $fundOpts[$f['id']] = $f['name']; }
+    $scope = scope_condition('pp');
+    $rows = [];
+    foreach (DB::all('SELECT pp.*, fy.label fy_label, s.name scheme_name, f.name fund_name FROM procurement_plans pp LEFT JOIN financial_years fy ON fy.id=pp.fy_id LEFT JOIN schemes s ON s.id=pp.scheme_id LEFT JOIN funds f ON f.id=pp.fund_id WHERE 1=1' . $scope['sql'] . ' ORDER BY pp.id DESC', $scope['params']) as $pl) {
+        $actions = '';
+        if (user_has_permission($user, 'plan.manage')) {
+            if (empty($pl['project_id'])) {
+                $actions .= h_form_open('/procurement-plans/' . $pl['id'] . '/project', 'post') . '<button class="btn btn-small">Convert to Project</button></form>';
+            } else {
+                $actions .= '<a href="' . e(app_url('/projects/' . $pl['project_id'])) . '">Project #' . (int) $pl['project_id'] . '</a> ';
+            }
+            if ($pl['status'] !== 'tender_created') {
+                $actions .= h_form_open('/procurement-plans/' . $pl['id'] . '/tender', 'post') . '<button class="btn btn-small btn-primary">Convert to Tender</button></form>';
+            }
+        }
+        $rows[] = [e($pl['work_name']), e($pl['fy_label']), e($pl['scheme_name'] ?: '—'), e($pl['fund_name'] ?: '—'), '<span class="num">' . h_money($pl['estimated_amount_minor']) . '</span>', e($pl['procurement_method'] ?: '—'), h_date($pl['expected_date']), h_status($pl['status'], ['planned' => 'draft', 'initiated' => 'info', 'tender_created' => 'approved', 'cancelled' => 'cancelled']), $actions];
+    }
+    $form = user_has_permission($user, 'plan.manage')
+        ? '<div class="card"><h2>Add Procurement Plan</h2>' . h_form_open('/procurement-plans/create', 'post')
+            . '<div class="field-row">' . h_select('Financial year', 'fy_id', $fyOpts, fy_current() ? fy_current()['id'] : null, true) . h_input('Work / procurement title', 'work_name', '', 'text', true) . '</div>'
+            . '<div class="field-row">' . h_select('Scheme', 'scheme_id', $schemeOpts) . h_select('Fund', 'fund_id', $fundOpts) . '</div>'
+            . '<div class="field-row">' . h_input('Estimated amount (₹)', 'estimated_amount', '', 'number', true) . h_input('Expected tender date', 'expected_date', '', 'date') . '</div>'
+            . '<div class="field-row">' . h_input('Procurement method', 'procurement_method', 'Open Tender') . h_input('Responsible officer', 'responsible_officer') . '</div>'
+            . h_textarea('Budget provision', 'budget_provision', '', 2)
+            . h_textarea('Remarks', 'remarks', '', 2)
+            . h_submit('Create Plan', 'btn-primary') . '</form></div>'
+        : '';
+    return '<div class="page-head"><h1>Annual Procurement Plan</h1></div>' . $form
+        . h_table(['Work', 'FY', 'Scheme', 'Fund', 'Estimate', 'Method', 'Expected', 'Status', 'Actions'], $rows);
+}
+
 function tenders_list_html(array $user): string
 {
     $rows = [];
     $map = ['draft' => 'draft', 'under_approval' => 'under_approval', 'approved' => 'approved', 'nit_generated' => 'approved', 'published' => 'published', 'bidding' => 'bidding', 'bid_closed' => 'bid_closed', 'technical_evaluation' => 'technical_evaluation', 'financial_evaluation' => 'financial_evaluation', 'awarded' => 'awarded', 'cancelled' => 'cancelled', 'retendered' => 'retendered', 'closed' => 'closed'];
-    foreach (DB::all('SELECT t.*, f.label fy_label FROM tenders t LEFT JOIN financial_years f ON f.id = t.fy_id WHERE t.deleted_at IS NULL ORDER BY t.id DESC') as $t) {
+    $scope = scope_condition('t');
+    foreach (DB::all('SELECT t.*, f.label fy_label FROM tenders t LEFT JOIN financial_years f ON f.id = t.fy_id WHERE t.deleted_at IS NULL' . $scope['sql'] . ' ORDER BY t.id DESC', $scope['params']) as $t) {
         $rows[] = [
             '<a href="' . e(app_url('/tenders/' . $t['id'])) . '">' . e($t['tender_number']) . '</a>',
             e($t['work_name'] ?: $t['title']),
@@ -1046,7 +1571,7 @@ function tenders_list_html(array $user): string
             '<span class="num">' . h_money($t['tender_value_minor'] ?: $t['estimated_cost_minor']) . '</span>',
         ];
     }
-    return '<div class="page-head"><h1>Tenders</h1>' . h_link('+ New Tender', '/tenders/new', 'btn-primary') . '</div>'
+    return '<div class="page-head"><h1>Tenders</h1>' . (user_has_permission($user, 'tender.manage') ? h_link('+ New Tender', '/tenders/new', 'btn-primary') : '') . '</div>'
         . h_table(['Number', 'Work', 'FY', 'Status', 'Value'], $rows);
 }
 
@@ -1057,7 +1582,8 @@ function tender_form_html(?array $t, array $user): string
         $fyOpts[$f['id']] = $f['label'];
     }
     $projOpts = [];
-    foreach (DB::all('SELECT id, work_name FROM projects WHERE deleted_at IS NULL ORDER BY id DESC') as $p) {
+    $pscope = scope_condition();
+    foreach (DB::all('SELECT id, work_name FROM projects WHERE deleted_at IS NULL' . $pscope['sql'] . ' ORDER BY id DESC', $pscope['params']) as $p) {
         $projOpts[$p['id']] = $p['work_name'];
     }
     $schemeOpts = [];
@@ -1113,6 +1639,21 @@ function tender_detail_html(int $id, array $user): string
     }
     if (in_array($t['status'], ['approved', 'nit_generated'], true) && user_has_permission($user, 'nit.manage')) {
         $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/nit')) . '">' . csrf_field() . '<button class="btn btn-accent">Generate NIT</button></form>';
+    }
+    if (user_has_permission($user, 'nit.manage')) {
+        $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/tender-document')) . '">' . csrf_field() . '<button class="btn">Generate tender document PDF</button></form>';
+    }
+    if (user_has_permission($user, 'boq.manage')) {
+        $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/boq-pdf')) . '">' . csrf_field() . '<button class="btn">Generate BOQ PDF</button></form>';
+    }
+    if (in_array($t['status'], ['financial_evaluation', 'awarded', 'closed'], true) && user_has_permission($user, 'technical_eval.manage')) {
+        $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/technical-evaluation-pdf')) . '">' . csrf_field() . '<button class="btn">Generate technical evaluation PDF</button></form>';
+    }
+    if (in_array($t['status'], ['financial_evaluation', 'awarded', 'closed'], true) && user_has_permission($user, 'comparative.view')) {
+        $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/comparative-pdf')) . '">' . csrf_field() . '<button class="btn">Generate comparative PDF</button></form>';
+    }
+    if (user_has_permission($user, 'document.download')) {
+        $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/complete-file')) . '">' . csrf_field() . '<button class="btn">Generate complete tender file</button></form>';
     }
     if (in_array($t['status'], ['approved', 'nit_generated'], true) && user_has_permission($user, 'tender.publish')) {
         $actions .= '<form method="post" action="' . e(app_url('/tenders/' . $id . '/publish')) . '" class="inline">' . csrf_field() . '<button class="btn btn-primary">Publish</button></form>';
@@ -1181,7 +1722,7 @@ function tender_detail_html(int $id, array $user): string
         foreach ($compliance['findings'] as $f) {
             $fRows[] = ['<span class="verification">' . e($f['severityLabel']) . '</span>', e($f['ruleCode']), e($f['ruleTitle']), e($f['message'])];
         }
-        $compHtml = '<div class="card"><h2>Compliance (' . e($compliance['summary']['passed'] ?? '0') . ' passed, ' . e($compliance['summary']['blocking'] ?? '0') . ' blocking)</h2>'
+        $compHtml = '<div class="card"><h2>Compliance (' . e($compliance['summary']['passed'] ?? '0') . ' passed, ' . e($compliance['summary']['blocking'] ?? '0') . ' blocking, ' . e($compliance['summary']['warning'] ?? '0') . ' warning, ' . e($compliance['summary']['verification_required'] ?? '0') . ' verification required, ' . e($compliance['summary']['not_applicable'] ?? '0') . ' not applicable)</h2>'
             . h_table(['Severity', 'Code', 'Rule', 'Result'], $fRows) . '</div>';
     } else {
         $compHtml = '<div class="card"><h2>Compliance</h2><p class="muted">Not evaluated yet.</p></div>';
@@ -1388,7 +1929,7 @@ function comparative_html(int $id): string
         $rows[] = [
             $r['rank'] !== null ? '#' . $r['rank'] : '—',
             e($r['bidder']),
-            h_status($r['qualification'], ['submitted' => 'submitted', 'technical_opened' => 'info', 'technically_qualified' => 'approved', 'technically_disqualified' => 'technically_disqualified', 'financial_opened' => 'info', 'awarded' => 'awarded']),
+            h_status($r['qualification'], ['submitted' => 'submitted', 'technical_opened' => 'info', 'technically_qualified' => 'approved', 'technically_disqualified' => 'technically_disqualified', 'financial_opened' => 'info', 'awarded' => 'awarded', 'closed' => 'closed']),
             '<span class="num">' . e($r['totalFmt']) . '</span>',
             $r['variation'] !== null ? '<span class="num">' . e(number_format((float) $r['variation'], 2)) . '%</span>' : '—',
         ];
@@ -1401,7 +1942,8 @@ function comparative_html(int $id): string
 function projects_list_html(array $user): string
 {
     $rows = [];
-    foreach (DB::all('SELECT p.*, f.label fy_label FROM projects p LEFT JOIN financial_years f ON f.id = p.fy_id WHERE p.deleted_at IS NULL ORDER BY p.id DESC') as $p) {
+    $scope = scope_condition('p');
+    foreach (DB::all('SELECT p.*, f.label fy_label FROM projects p LEFT JOIN financial_years f ON f.id = p.fy_id WHERE p.deleted_at IS NULL' . $scope['sql'] . ' ORDER BY p.id DESC', $scope['params']) as $p) {
         $rows[] = [
             '<a href="' . e(app_url('/projects/' . $p['id'])) . '">' . e($p['work_name']) . '</a>',
             e($p['fy_label']),
@@ -1410,7 +1952,7 @@ function projects_list_html(array $user): string
             '<span class="num">' . e((string) ((float) $p['physical_progress'])) . '%</span>',
         ];
     }
-    return '<div class="page-head"><h1>Projects</h1>' . h_link('+ New Project', '/projects/new', 'btn-primary') . '</div>'
+    return '<div class="page-head"><h1>Projects</h1>' . (user_has_permission($user, 'project.manage') ? h_link('+ New Project', '/projects/new', 'btn-primary') : '') . '</div>'
         . h_table(['Work', 'FY', 'Status', 'Estimate', 'Progress'], $rows);
 }
 
@@ -1431,14 +1973,13 @@ function project_form_html(array $user): string
         . '<div class="field-row">' . h_input('Technical sanction no', 'tech_sanction_no') . h_input('Technical sanction date', 'tech_sanction_date', '', 'date') . '</div>'
         . h_input('Technical sanction authority', 'tech_sanction_authority')
         . h_input('Technical sanction amount (₹)', 'tech_sanction_amount', '', 'number')
-        . '<div class="field-row">' . h_input('Estimate amount (₹)', 'estimate_amount', '', 'number') . h_input('Sanctioned amount (₹)', 'sanctioned_amount', '', 'number') . '</div>'
+        . '<div class="field-row">' . h_input('Estimate amount (₹) *', 'estimate_amount', '', 'number', true) . h_input('Sanctioned amount (₹)', 'sanctioned_amount', '', 'number') . '</div>'
         . h_submit('Create Project', 'btn-primary') . '</form></div>';
 }
 
 function project_detail_html(int $id, array $user): string
 {
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$id]);
-    if (!$p) throw not_found('Project not found');
+    $p = project_get($id);
     $fy = DB::one('SELECT * FROM financial_years WHERE id = ?', [(int) $p['fy_id']]);
     $progress = DB::all('SELECT * FROM work_progress WHERE project_id = ? ORDER BY id DESC LIMIT 10', [$id]);
     $measurements = DB::all('SELECT * FROM measurements WHERE project_id = ? ORDER BY id DESC', [$id]);
@@ -1509,6 +2050,9 @@ function project_detail_html(int $id, array $user): string
     $billHtml = '<div class="card"><h2>Bills</h2>' . h_table(['Number', 'Date', 'Status', 'Net payable'], $billRows);
     foreach ($bills as $b) {
         $billHtml .= '<h3 id="b' . (int) $b['id'] . '">' . e($b['bill_number']) . ' ' . h_status($b['status'], ['draft' => 'draft', 'submitted' => 'submitted', 'checked' => 'checked', 'certified' => 'certified', 'approved' => 'approved', 'paid' => 'paid', 'partially_paid' => 'partially_paid', 'rejected' => 'rejected', 'returned' => 'info']) . '</h3>';
+        if (user_has_permission($user, 'bill.manage')) {
+            $billHtml .= '<form method="post" action="' . e(app_url('/bills/' . $b['id'] . '/pdf')) . '" class="inline">' . csrf_field() . '<button class="btn btn-small">Generate bill PDF</button></form>';
+        }
         if ($b['status'] === 'draft' && user_has_permission($user, 'bill.manage')) {
             $billHtml .= bill_edit_form($b);
             $billHtml .= '<form method="post" action="' . e(app_url('/bills/' . $b['id'] . '/submit')) . '" class="inline">' . csrf_field() . '<button class="btn btn-primary">Submit bill</button></form>';
@@ -1643,7 +2187,8 @@ function completion_form(int $id): string
 function contractors_list_html(array $user): string
 {
     $rows = [];
-    foreach (DB::all('SELECT * FROM contractors WHERE deleted_at IS NULL ORDER BY id DESC') as $c) {
+    $scope = scope_condition();
+    foreach (DB::all('SELECT * FROM contractors WHERE deleted_at IS NULL' . $scope['sql'] . ' ORDER BY id DESC', $scope['params']) as $c) {
         $exp = DB::val('SELECT expiry_date FROM contractor_documents WHERE contractor_id = ? AND expiry_status != ? ORDER BY expiry_date LIMIT 1', [(int) $c['id'], 'not_applicable']);
         $rows[] = [
             '<a href="' . e(app_url('/contractors/' . $c['id'])) . '">' . e($c['legal_name']) . '</a>',
@@ -1653,7 +2198,7 @@ function contractors_list_html(array $user): string
             $exp ? h_date($exp) : '—',
         ];
     }
-    return '<div class="page-head"><h1>Contractors</h1>' . h_link('+ New Contractor', '/contractors/new', 'btn-primary') . '</div>'
+    return '<div class="page-head"><h1>Contractors</h1>' . (user_has_permission($user, 'contractor.manage') ? h_link('+ New Contractor', '/contractors/new', 'btn-primary') : '') . '</div>'
         . h_table(['Name', 'Code', 'Class', 'Status', 'Next expiry'], $rows);
 }
 
@@ -1736,11 +2281,12 @@ function rules_html(): string
 function compliance_list_html(): string
 {
     $rows = [];
-    foreach (DB::all('SELECT t.id, t.tender_number, t.work_name, t.compliance_status, t.status FROM tenders t WHERE t.deleted_at IS NULL ORDER BY t.id DESC') as $t) {
+    $scope = scope_condition('t');
+    foreach (DB::all('SELECT t.id, t.tender_number, t.title, t.work_name, t.compliance_status, t.status FROM tenders t WHERE t.deleted_at IS NULL' . $scope['sql'] . ' ORDER BY t.id DESC', $scope['params']) as $t) {
         $rows[] = [
             '<a href="' . e(app_url('/compliance/' . $t['id'])) . '">' . e($t['tender_number']) . '</a>',
             e($t['work_name'] ?: $t['title']),
-            $t['compliance_status'] ? h_status($t['compliance_status'], ['passed' => 'approved', 'warning' => 'warning', 'blocking' => 'blocking']) : '<span class="muted">not evaluated</span>',
+            $t['compliance_status'] ? h_status($t['compliance_status'], ['passed' => 'approved', 'warning' => 'warning', 'blocking' => 'blocking', 'verification_required' => 'verification_required']) : '<span class="muted">not evaluated</span>',
             h_status($t['status'], ['draft' => 'draft', 'under_approval' => 'under_approval', 'approved' => 'approved', 'published' => 'published', 'awarded' => 'awarded', 'closed' => 'closed', 'cancelled' => 'cancelled']),
         ];
     }
@@ -1770,7 +2316,7 @@ function compliance_detail_html(int $id, array $user): string
             $f['source'] ? e($f['source']['title'] ?? '') . '<br><small class="muted">' . e($f['source']['reference_number'] ?? '') . '</small>' : '—',
         ];
     }
-    $out .= '<div class="card"><h2>Findings (' . e($latest['summary']['passed'] ?? '0') . ' passed · ' . e($latest['summary']['blocking'] ?? '0') . ' blocking · ' . e($latest['summary']['verification_required'] ?? '0') . ' verification required)</h2>'
+    $out .= '<div class="card"><h2>Findings (' . e($latest['summary']['passed'] ?? '0') . ' passed · ' . e($latest['summary']['blocking'] ?? '0') . ' blocking · ' . e($latest['summary']['verification_required'] ?? '0') . ' verification required · ' . e($latest['summary']['not_applicable'] ?? '0') . ' not applicable)</h2>'
         . h_table(['Severity', 'Code', 'Rule', 'Result', 'Source'], $rows) . '</div>';
     return $out;
 }
@@ -1780,7 +2326,7 @@ function reports_html(): string
     $fyId = (int) ($_GET['fy_id'] ?? 0) ?: (fy_current() ? (int) fy_current()['id'] : 0);
     $d = report_dashboard($fyId ?: null);
     $rows = [];
-    foreach (DB::all("SELECT status, COUNT(*) c FROM tenders WHERE deleted_at IS NULL GROUP BY status") as $r) {
+    foreach (($d['statusPipeline'] ?? []) as $r) {
         $rows[] = [e($r['status']), (int) $r['c']];
     }
     $out = '<div class="page-head"><h1>Reports</h1>' . fy_filter_form($fyId ?: null) . '</div>';
@@ -1789,9 +2335,10 @@ function reports_html(): string
         . stat_card(inr($d['awards']['awardedMinor'] ?? 0), 'Awarded value')
         . stat_card(inr($d['payments']['paidMinor'] ?? 0), 'Payments recorded')
         . '</div>';
-    $out .= '<div class="card"><h2>Export</h2><p class="muted">CSV export of reconciliation and tenders is available below.</p>'
-        . '<div class="actions">' . h_link('Reconciliation report', '/reports/reconciliation', 'btn-outline')
-        . h_link('Export tenders CSV', '/reports/tenders.csv', 'btn-outline') . '</div></div>';
+    $out .= '<div class="card"><h2>Export</h2><p class="muted">CSV and PDF exports are generated from live database records with current filters.</p>'
+        . '<div class="actions">' . h_link('Reconciliation report', '/reports/reconciliation?fy_id=' . $fyId, 'btn-outline')
+        . h_link('Export tenders CSV', '/reports/tenders-csv?fy_id=' . $fyId, 'btn-outline')
+        . h_link('Export tenders PDF', '/reports/tenders-pdf?fy_id=' . $fyId, 'btn-outline') . '</div></div>';
     return $out;
 }
 
@@ -1835,17 +2382,25 @@ function fy_html(array $user): string
 function users_html(array $user): string
 {
     $rows = [];
-    foreach (DB::all('SELECT * FROM users WHERE deleted_at IS NULL ORDER BY id') as $u) {
+    $scope = scope_condition();
+    foreach (DB::all('SELECT * FROM users WHERE deleted_at IS NULL' . $scope['sql'] . ' ORDER BY id', $scope['params']) as $u) {
         $roles = array_map(fn($r) => $r['name'], user_roles((int) $u['id']));
         $rows[] = [e($u['name']), e($u['email']), e(implode(', ', $roles)), e($u['designation'] ?: '—'), (int) $u['is_active'] === 1 ? '<span class="badge badge-active">active</span>' : '<span class="badge badge-cancelled">disabled</span>'];
     }
-    $roleOpts = []; foreach (DB::all('SELECT id, name FROM roles ORDER BY name') as $r) { $roleOpts[$r['id']] = $r['name']; }
-    $panOpts = []; foreach (DB::all('SELECT id, gram_panchayat FROM panchayats ORDER BY gram_panchayat') as $p) { $panOpts[$p['id']] = $p['gram_panchayat']; }
+    $roleSql = (int) ($user['is_global_admin'] ?? 0) === 1 ? 'SELECT id, name FROM roles ORDER BY name' : "SELECT id, name FROM roles WHERE code != 'super_admin' ORDER BY name";
+    $roleOpts = []; foreach (DB::all($roleSql) as $r) { $roleOpts[$r['id']] = $r['name']; }
+    $panOpts = [];
+    if ((int) ($user['is_global_admin'] ?? 0) === 1) {
+        foreach (DB::all('SELECT id, gram_panchayat FROM panchayats ORDER BY gram_panchayat') as $p) { $panOpts[$p['id']] = $p['gram_panchayat']; }
+    } else {
+        $pid = actor_panchayat_id($user);
+        foreach (DB::all('SELECT id, gram_panchayat FROM panchayats WHERE id = ?', [$pid]) as $p) { $panOpts[$p['id']] = $p['gram_panchayat']; }
+    }
     $form = user_has_permission($user, 'user.manage')
         ? '<div class="card"><h2>Create user</h2>' . h_form_open('/users/create', 'post')
         . '<div class="field-row">' . h_input('Name *', 'name', '', 'text', true) . h_input('Email *', 'email', '', 'email', true) . '</div>'
-        . '<div class="field-row">' . h_select('Role *', 'role_id', $roleOpts, null, true) . h_select('Panchayat', 'panchayat_id', $panOpts) . '</div>'
-        . '<div class="field-row">' . h_input('Designation', 'designation') . h_input('Password *', 'password', '', 'password', true) . '</div>'
+        . '<div class="field-row">' . h_select('Role *', 'role_id', $roleOpts, null, true) . h_select('Panchayat', 'panchayat_id', $panOpts, null, false) . '</div>'
+        . '<div class="field-row">' . h_input('Designation', 'designation') . h_input('Password *', 'password', '', 'password', true, 'Minimum 10 characters including upper-case, lower-case and number.') . '</div><p class="muted">Panchayat is required for all non-global users. Choosing Super Admin creates an unscoped global administrator.</p>'
         . h_submit('Create user', 'btn-primary') . '</form></div>'
         : '';
     return '<div class="page-head"><h1>Users & Roles</h1></div>' . $form . h_table(['Name', 'Email', 'Roles', 'Designation', 'Status'], $rows);
@@ -1854,7 +2409,8 @@ function users_html(array $user): string
 function audit_html(): string
 {
     $rows = [];
-    foreach (DB::all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300') as $a) {
+    $scope = scope_condition();
+    foreach (DB::all('SELECT * FROM audit_logs WHERE 1=1' . $scope['sql'] . ' ORDER BY id DESC LIMIT 300', $scope['params']) as $a) {
         $rows[] = [h_date($a['created_at']), e($a['action']), e($a['entity_type'] . ($a['entity_id'] ? '#' . $a['entity_id'] : '')), e($a['actor_name'] ?: 'system'), e($a['ip_address'] ?: '')];
     }
     return '<div class="page-head"><h1>Audit Log</h1></div><div class="card"><p class="muted">Append-only audit trail. Recent 300 entries.</p></div>'
@@ -1890,16 +2446,91 @@ function settings_html(): string
         . h_submit('Save settings', 'btn-primary') . '</form></div>';
 }
 
+function backups_html(array $user): string
+{
+    $isGlobal = (int) ($user['is_global_admin'] ?? 0) === 1;
+    $content = '<div class="page-head"><h1>Backup & restore</h1>'
+        . ($isGlobal ? h_form_open('/backups/create', 'post') . '<button class="btn btn-primary">Create full backup</button></form>' : '')
+        . '</div>';
+    if (!$isGlobal) {
+        return $content . '<div class="card"><div class="alert alert-danger">Full database backup/restore is restricted to global administrators to prevent cross-Panchayat data exposure.</div></div>';
+    }
+    $content .= '<div class="card"><p class="muted">Backups are offline JSON snapshots generated from the live database and stored under <code>data/backups</code>. Restore is destructive and must be confirmed by typing RESTORE.</p></div>';
+    $rows = [];
+    foreach (backup_list($user) as $b) {
+        $restoreForm = h_form_open('/backups/' . $b['id'] . '/restore', 'post')
+            . '<input name="confirm" placeholder="Type RESTORE" autocomplete="off">'
+            . '<button class="btn btn-danger" type="submit">Restore</button></form>';
+        $rows[] = [
+            e($b['file_name']),
+            e($b['backup_type']),
+            e((string) $b['size_bytes']),
+            h_status($b['status'], ['created' => 'approved', 'failed' => 'rejected']),
+            h_date($b['created_at']),
+            e($b['created_by_name'] ?? ''),
+            '<a href="' . e(app_url('/backups/' . $b['id'])) . '">Download</a>',
+            $restoreForm,
+        ];
+    }
+    return $content . h_table(['File', 'Type', 'Bytes', 'Status', 'Created', 'By', 'Download', 'Restore'], $rows);
+}
+
+function documents_list_html(array $user): string
+{
+    $scope = scope_condition('d');
+    $docs = DB::all(
+        'SELECT d.*, u.name uploaded_by_name FROM documents d LEFT JOIN users u ON u.id = d.uploaded_by WHERE 1=1'
+        . $scope['sql'] . ' ORDER BY d.id DESC LIMIT 250',
+        $scope['params']
+    );
+    $rows = [];
+    foreach ($docs as $d) {
+        $entity = e($d['entity_type']) . '#' . e((string) $d['entity_id']);
+        $rows[] = [
+            e($d['category']),
+            e($d['original_name']),
+            $entity,
+            e($d['mime_type'] ?: 'application/octet-stream'),
+            e((string) $d['version']),
+            h_date($d['created_at']),
+            '<a href="' . e(app_url('/documents/' . $d['id'])) . '">Open</a>',
+        ];
+    }
+    return '<div class="page-head"><h1>Document register</h1>'
+        . (user_has_permission($user, 'document.upload') ? h_link('Upload document', '/documents/upload', 'btn-primary') : '')
+        . '</div>'
+        . '<div class="card"><p class="muted">Generated documents are PDF files produced from database records. Uploaded supporting documents are stored under the protected data directory with extension/MIME checks and SHA-256 hashes.</p></div>'
+        . h_table(['Category', 'File', 'Entity', 'MIME type', 'Version', 'Created', 'Action'], $rows);
+}
+
+function document_upload_html(): string
+{
+    $types = [
+        'tender' => 'Tender', 'project' => 'Project', 'contractor' => 'Contractor', 'bill' => 'Bill',
+        'payment' => 'Payment', 'award' => 'Award', 'work_order' => 'Work order', 'agreement' => 'Agreement',
+        'measurement' => 'Measurement', 'completion' => 'Completion',
+    ];
+    return '<div class="page-head"><h1>Upload supporting document</h1>' . h_back('/documents') . '</div>'
+        . '<div class="card">'
+        . h_form_open('/documents/upload', 'post', 'enctype="multipart/form-data"')
+        . '<div class="field-row">' . h_select('Entity type', 'entity_type', $types, null, true)
+        . h_input('Entity ID', 'entity_id', '', 'number', true, 'Use the ID shown in the relevant tender/project/bill URL or detail page.') . '</div>'
+        . h_input('Category', 'category', 'supporting', 'text', true, 'Examples: sanction, boq, bidder_doc, measurement_photo, payment_reference.')
+        . '<label class="field"><span class="field-label">File *</span><input type="file" name="document" required></label>'
+        . '<p class="muted">Allowed: PDF, images, Office/OpenDocument files, CSV and text. HTML/SVG/scripts are rejected. Maximum size: ' . e((string) round(MAX_UPLOAD_BYTES / 1024 / 1024, 1)) . ' MB.</p>'
+        . h_submit('Upload document', 'btn-primary') . '</form></div>';
+}
+
 function public_list_html(): string
 {
     $rows = [];
-    foreach (DB::all("SELECT * FROM tenders WHERE deleted_at IS NULL AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded') ORDER BY id DESC") as $t) {
+    foreach (DB::all("SELECT * FROM tenders WHERE deleted_at IS NULL AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded','closed') ORDER BY id DESC") as $t) {
         $rows[] = [
             '<a href="' . e(app_url('/public/tenders/' . $t['id'])) . '">' . e($t['tender_number']) . '</a>',
             e($t['work_name'] ?: $t['title']),
             h_date($t['publication_date']),
             h_date($t['bid_close_date']),
-            h_status($t['status'], ['published' => 'published', 'bidding' => 'bidding', 'bid_closed' => 'bid_closed', 'technical_evaluation' => 'technical_evaluation', 'financial_evaluation' => 'financial_evaluation', 'awarded' => 'awarded']),
+            h_status($t['status'], ['published' => 'published', 'bidding' => 'bidding', 'bid_closed' => 'bid_closed', 'technical_evaluation' => 'technical_evaluation', 'financial_evaluation' => 'financial_evaluation', 'awarded' => 'awarded', 'closed' => 'closed']),
         ];
     }
     return '<div class="page-head"><h1>Public Tender Portal</h1>' . (current_user() ? h_link('Dashboard', '/', 'btn-outline') : h_link('Staff sign in', '/login', 'btn-outline')) . '</div>'
@@ -1909,11 +2540,11 @@ function public_list_html(): string
 
 function public_tender_html(int $id): string
 {
-    $t = DB::one("SELECT * FROM tenders WHERE id = ? AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded')", [$id]);
+    $t = DB::one("SELECT * FROM tenders WHERE id = ? AND deleted_at IS NULL AND status IN ('published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded','closed')", [$id]);
     if (!$t) {
         throw not_found('Tender not available publicly');
     }
-    $p = panchayat_context();
+    $p = panchayat_context($t['panchayat_id'] !== null ? (int) $t['panchayat_id'] : null);
     $boq = DB::all('SELECT * FROM boq_items WHERE tender_id = ? ORDER BY sort_order, id', [$id]);
     $nitDoc = DB::one("SELECT d.* FROM documents d WHERE d.entity_type = 'tender' AND d.entity_id = ? AND d.category = 'nit' ORDER BY d.id DESC LIMIT 1", [$id]);
     $out = '<div class="page-head"><h1>' . e($t['tender_number']) . '</h1>' . h_back('/public') . '</div>'

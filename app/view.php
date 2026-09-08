@@ -91,9 +91,13 @@ function h_table(array $headers, array $rows, string $empty = 'No records found'
     return $out;
 }
 
-function h_form_open(string $action = '', string $method = 'post'): string
+function h_form_open(string $action = '', string $method = 'post', string $extraAttrs = ''): string
 {
-    $attrs = 'action="' . e($action) . '" method="' . e($method) . '"';
+    $target = $action;
+    if ($action !== '' && str_starts_with($action, '/')) {
+        $target = app_url($action);
+    }
+    $attrs = 'action="' . e($target) . '" method="' . e($method) . '"' . ($extraAttrs !== '' ? ' ' . $extraAttrs : '');
     if (strtolower($method) === 'post') {
         return '<form ' . $attrs . ' class="form"><input type="hidden" name="_csrf" value="' . e(csrf_token()) . '">';
     }
@@ -151,23 +155,44 @@ function layout_nav_items(): array
 {
     return [
         'dashboard' => ['/', 'Dashboard', 'report.view'],
+        'panchayat' => ['/panchayat', 'Panchayat', 'panchayat.view'],
+        'plans' => ['/procurement-plans', 'Procurement Plan', 'plan.view'],
+        'schemes' => ['/schemes', 'Schemes', 'scheme.view'],
+        'funds' => ['/funds', 'Funds', 'scheme.view'],
+        'budgets' => ['/budgets', 'Budgets', 'scheme.view'],
         'tenders' => ['/tenders', 'Tenders', 'tender.view'],
         'projects' => ['/projects', 'Projects', 'project.view'],
         'contractors' => ['/contractors', 'Contractors', 'contractor.view'],
         'rules' => ['/rules', 'Rules & Refs', 'rules.view'],
         'compliance' => ['/compliance', 'Compliance', 'rules.view'],
         'reports' => ['/reports', 'Reports', 'report.view'],
+        'documents' => ['/documents', 'Documents', 'document.view'],
         'fy' => ['/financial-years', 'Financial Years', 'fy.view'],
         'users' => ['/users', 'Users & Roles', 'user.view'],
         'audit' => ['/audit', 'Audit Log', 'audit.view'],
         'notifications' => ['/notifications', 'Notifications', 'notification.view'],
         'settings' => ['/settings', 'Settings', 'settings.manage'],
+        'backups' => ['/backups', 'Backups', 'backup.manage'],
         'public' => ['/public', 'Public Portal', 'public.view'],
     ];
 }
 
+
+function send_security_headers(): void
+{
+    if (headers_sent()) {
+        return;
+    }
+    header("X-Content-Type-Options: nosniff");
+    header("X-Frame-Options: SAMEORIGIN");
+    header("Referrer-Policy: same-origin");
+    header("Permissions-Policy: geolocation=(), microphone=(), camera=()");
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'");
+}
+
 function render_page(string $title, string $content, string $active = '', bool $full = true): void
 {
+    send_security_headers();
     $user = current_user();
     $flash = flash_take();
     $flashHtml = '';
@@ -226,13 +251,13 @@ function current_panchayat(): ?array
     return panchayat_context();
 }
 
-function scope_condition(string $col = 'id'): array
+function scope_condition(string $alias = ''): array
 {
-    // Return ['sql'=>'...', 'params'=>[...]] for restricting rows to the user's panchayat.
-    $user = current_user();
-    if (!$user || $user['panchayat_id'] === null) {
+    // Return ['sql'=>' AND alias.panchayat_id = ?', 'params'=>[...]] for panchayat-scoped tables.
+    $pid = current_scope_panchayat_id();
+    if ($pid === null) {
         return ['sql' => '', 'params' => []];
     }
-    // Tenders/projects reference panchayat via user scope through created_by; keep simple:
-    return ['sql' => '', 'params' => []];
+    $prefix = $alias !== '' ? rtrim($alias, '.') . '.' : '';
+    return ['sql' => ' AND ' . $prefix . 'panchayat_id = ?', 'params' => [$pid]];
 }

@@ -54,12 +54,13 @@ function compliance_tender_doc_categories(int $tenderId): array
 
 function make_finding(array $rule, string $status, string $message, string $why, ?string $action, ?array $source, bool $blocks): array
 {
+    $severityLabel = $status === 'not_applicable' ? 'NOT APPLICABLE' : (SEVERITY_LABELS[$rule['severity']] ?? $rule['severity']);
     return [
         'ruleCode' => $rule['code'],
         'ruleTitle' => $rule['title'],
         'ruleCategory' => $rule['category'],
         'severity' => $rule['severity'],
-        'severityLabel' => SEVERITY_LABELS[$rule['severity']] ?? $rule['severity'],
+        'severityLabel' => $severityLabel,
         'status' => $status,
         'message' => $message,
         'why' => $why,
@@ -69,11 +70,36 @@ function make_finding(array $rule, string $status, string $message, string $why,
     ];
 }
 
+function compliance_rule_applies(array $config, array $tender): bool
+{
+    $when = $config['when'] ?? null;
+    if (!is_array($when) || !$when) {
+        return true;
+    }
+    foreach ($when as $field => $expected) {
+        $actual = $tender[$field] ?? null;
+        $actualNorm = strtolower(trim((string) $actual));
+        if (is_array($expected)) {
+            $ok = false;
+            foreach ($expected as $v) {
+                if ($actualNorm === strtolower(trim((string) $v))) { $ok = true; break; }
+            }
+            if (!$ok) { return false; }
+        } elseif ($actualNorm !== strtolower(trim((string) $expected))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function compliance_evaluate_rule(array $rule, array $tender, array $ctx): array
 {
     $config = json_load($rule['config'], []);
     $source = compliance_ref_label($rule['reference_id'] !== null ? (int) $rule['reference_id'] : null);
     $blocks = $rule['severity'] === 'blocking';
+    if (!compliance_rule_applies($config, $tender)) {
+        return make_finding($rule, 'not_applicable', 'Rule not applicable for this tender.', $rule['description'] ?? '', null, $source, false);
+    }
     $valueMinor = (int) ($tender['tender_value_minor'] ?: $tender['estimated_cost_minor'] ?: 0);
 
     switch ($rule['rule_type']) {
@@ -242,13 +268,15 @@ function compliance_evaluate_rule(array $rule, array $tender, array $ctx): array
 
 function compliance_summarize(array $findings): array
 {
-    $s = ['blocking' => 0, 'warning' => 0, 'info' => 0, 'verification_required' => 0, 'passed' => 0];
+    $s = ['blocking' => 0, 'warning' => 0, 'info' => 0, 'verification_required' => 0, 'not_applicable' => 0, 'passed' => 0];
     foreach ($findings as $f) {
-        if ($f['severity'] === 'blocking' && $f['status'] === 'fail') {
+        if ($f['status'] === 'not_applicable') {
+            $s['not_applicable']++;
+        } elseif ($f['severity'] === 'blocking' && $f['status'] === 'fail') {
             $s['blocking']++;
         } elseif ($f['severity'] === 'warning' && $f['status'] === 'fail') {
             $s['warning']++;
-        } elseif ($f['severity'] === 'verification_required') {
+        } elseif ($f['severity'] === 'verification_required' || $f['status'] === 'verification') {
             $s['verification_required']++;
         } elseif ($f['status'] === 'pass') {
             $s['passed']++;
@@ -280,11 +308,11 @@ function compliance_evaluate_tender(array $tender, array $opts = []): array
 
     if (!empty($opts['persist'])) {
         DB::insert(
-            'INSERT INTO rule_evaluations (uid, ruleset_id, entity_type, entity_id, results, summary, evaluated_by)
-             VALUES (?,?,?,?,?,?,?)',
-            [uid(), $ruleset ? (int) $ruleset['id'] : null, 'tender', (int) $tender['id'], json_store($findings), json_store($summary), $opts['actorId'] ?? null]
+            'INSERT INTO rule_evaluations (uid, panchayat_id, ruleset_id, entity_type, entity_id, results, summary, evaluated_by)
+             VALUES (?,?,?,?,?,?,?,?)',
+            [uid(), $tender['panchayat_id'] !== null ? (int) $tender['panchayat_id'] : null, $ruleset ? (int) $ruleset['id'] : null, 'tender', (int) $tender['id'], json_store($findings), json_store($summary), $opts['actorId'] ?? null]
         );
-        $status = $summary['blocking'] > 0 ? 'blocking' : ($summary['warning'] > 0 ? 'warning' : 'passed');
+        $status = $summary['blocking'] > 0 ? 'blocking' : ($summary['warning'] > 0 ? 'warning' : (($summary['verification_required'] ?? 0) > 0 ? 'verification_required' : 'passed'));
         DB::run('UPDATE tenders SET compliance_status = ? WHERE id = ?', [$status, (int) $tender['id']]);
     }
     return ['ruleset' => $ruleset, 'findings' => $findings, 'summary' => $summary];

@@ -71,10 +71,11 @@ function fy_close(int $id): array
 function fy_next_serial(string $scope, ?int $fyId, ?int $panchayatId = null, string $prefix = ''): int
 {
     return DB::tx(function () use ($scope, $fyId, $panchayatId, $prefix) {
-        $existing = DB::one(
-            'SELECT * FROM numbering_sequences WHERE scope = ? AND fy_id = ? AND prefix = ?',
-            [$scope, $fyId, $prefix]
-        );
+        $where = 'scope = ? AND prefix = ?';
+        $params = [$scope, $prefix];
+        if ($fyId === null) { $where .= ' AND fy_id IS NULL'; } else { $where .= ' AND fy_id = ?'; $params[] = $fyId; }
+        if ($panchayatId === null) { $where .= ' AND panchayat_id IS NULL'; } else { $where .= ' AND panchayat_id = ?'; $params[] = $panchayatId; }
+        $existing = DB::one('SELECT * FROM numbering_sequences WHERE ' . $where, $params);
         if ($existing) {
             $next = (int) $existing['last_value'] + 1;
             DB::run('UPDATE numbering_sequences SET last_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [$next, (int) $existing['id']]);
@@ -114,41 +115,47 @@ function num_render(string $pattern, ?int $fyId, int $serial): string
     ]);
 }
 
-function num_next(string $scope, ?int $fyId, string $prefix = '', ?string $pattern = null): string
+function num_next(string $scope, ?int $fyId, string $prefix = '', ?string $pattern = null, ?int $panchayatId = null): string
 {
-    $serial = fy_next_serial($scope, $fyId, null, $prefix);
+    $scopePanchayatId = $panchayatId ?? actor_panchayat_id();
+    $serial = fy_next_serial($scope, $fyId, $scopePanchayatId, $prefix);
     return num_render($pattern ?: num_setting("numbering.$scope.pattern", '{PREFIX}/NIT/{FY}/{NNN}'), $fyId, $serial);
 }
 
-function num_next_tender_number(?int $fyId): string
+function num_next_tender_number(?int $fyId, ?int $panchayatId = null): string
 {
+    $scopePanchayatId = $panchayatId ?? actor_panchayat_id();
     for ($i = 0; $i < 10; $i++) {
-        $number = num_next('tender_nit', $fyId, '', num_setting('numbering.tender_nit.pattern', '{PREFIX}/NIT/{FY}/{NNN}'));
-        if (!DB::one('SELECT id FROM tenders WHERE tender_number = ?', [$number])) {
+        $number = num_next('tender_nit', $fyId, '', num_setting('numbering.tender_nit.pattern', '{PREFIX}/NIT/{FY}/{NNN}'), $scopePanchayatId);
+        $sql = 'SELECT id FROM tenders WHERE tender_number = ?';
+        $params = [$number];
+        if ($fyId === null) { $sql .= ' AND fy_id IS NULL'; } else { $sql .= ' AND fy_id = ?'; $params[] = $fyId; }
+        if ($scopePanchayatId === null) { $sql .= ' AND panchayat_id IS NULL'; } else { $sql .= ' AND panchayat_id = ?'; $params[] = $scopePanchayatId; }
+        if (!DB::one($sql, $params)) {
             return $number;
         }
     }
     throw conflict('Could not allocate a unique tender number');
 }
 
-function num_next_bill_number(?int $fyId): string
+function num_next_bill_number(?int $fyId, ?int $panchayatId = null): string
 {
-    return num_next('bill', $fyId, '', num_setting('numbering.bill.pattern', 'BILL/{FY}/{NNN}'));
+    return num_next('bill', $fyId, '', num_setting('numbering.bill.pattern', 'BILL/{FY}/{NNN}'), $panchayatId);
 }
 
-function num_next_work_order(?int $fyId): string
+function num_next_work_order(?int $fyId, ?int $panchayatId = null): string
 {
-    return num_next('work_order', $fyId, '', num_setting('numbering.work_order.pattern', 'WO/{FY}/{NNN}'));
+    return num_next('work_order', $fyId, '', num_setting('numbering.work_order.pattern', 'WO/{FY}/{NNN}'), $panchayatId);
 }
 
-function num_next_agreement(?int $fyId): string
+function num_next_agreement(?int $fyId, ?int $panchayatId = null): string
 {
-    return num_next('agreement', $fyId, '', num_setting('numbering.agreement.pattern', 'AGR/{FY}/{NNN}'));
+    return num_next('agreement', $fyId, '', num_setting('numbering.agreement.pattern', 'AGR/{FY}/{NNN}'), $panchayatId);
 }
 
-function num_next_loa(?int $fyId): string
+function num_next_loa(?int $fyId, ?int $panchayatId = null): string
 {
-    return num_next('loa', $fyId, '', num_setting('numbering.loa.pattern', 'LOA/{FY}/{NNN}'));
+    return num_next('loa', $fyId, '', num_setting('numbering.loa.pattern', 'LOA/{FY}/{NNN}'), $panchayatId);
 }
 
 function num_next_contractor_code(): string
@@ -236,7 +243,18 @@ function contractor_get(int $id): array
     if (!$c) {
         throw not_found('Contractor not found');
     }
+    scope_assert_row($c, null, 'contractor');
     return $c;
+}
+
+function project_get(int $id): array
+{
+    $p = DB::one('SELECT * FROM projects WHERE id = ? AND deleted_at IS NULL', [$id]);
+    if (!$p) {
+        throw not_found('Project not found');
+    }
+    scope_assert_row($p, null, 'project');
+    return $p;
 }
 
 function contractor_expiry_status(?string $expiryDate): string
@@ -264,16 +282,17 @@ function contractor_create(array $data, array $actor): array
         throw validation('Legal name is required');
     }
     $code = num_next_contractor_code();
+    $pid = actor_panchayat_id($actor);
     $id = DB::insert(
         'INSERT INTO contractors
-           (uid, contractor_code, legal_name, business_name, address, mobile, email, registration_no, registration_class,
+           (uid, panchayat_id, contractor_code, legal_name, business_name, address, mobile, email, registration_no, registration_class,
             registration_valid_from, registration_valid_to, pan, gst, bank_name, bank_account_no, bank_ifsc,
             experience_summary, status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), $code, $data['legal_name'], $data['business_name'] ?? null, $data['address'] ?? null, $data['mobile'] ?? null,
+            uid(), $pid, $code, $data['legal_name'], $data['business_name'] ?? null, $data['address'] ?? null, $data['mobile'] ?? null,
             $data['email'] ?? null, $data['registration_no'] ?? null, $data['registration_class'] ?? null,
-            $data['registration_valid_from'] ?? null, $data['registration_valid_to'] ?? null, $data['pan'] ?? null, $data['gst'] ?? null,
+            date_or_null($data['registration_valid_from'] ?? null), date_or_null($data['registration_valid_to'] ?? null), $data['pan'] ?? null, $data['gst'] ?? null,
             $data['bank_name'] ?? null, $data['bank_account_no'] ?? null, $data['bank_ifsc'] ?? null,
             $data['experience_summary'] ?? null, $data['status'] ?? 'active', (int) $actor['id'],
         ]
@@ -284,12 +303,12 @@ function contractor_create(array $data, array $actor): array
 
 function contractor_upsert_document(int $contractorId, array $data, array $actor): array
 {
-    contractor_get($contractorId);
+    $contractor = contractor_get($contractorId);
     $status = contractor_expiry_status($data['expiry_date'] ?? null);
     $id = DB::insert(
-        'INSERT INTO contractor_documents (uid, contractor_id, doc_type, doc_name, issued_date, expiry_date, expiry_status, remarks)
-         VALUES (?,?,?,?,?,?,?,?)',
-        [uid(), $contractorId, $data['doc_type'] ?? 'other', $data['doc_name'] ?? 'Document', $data['issued_date'] ?? null, $data['expiry_date'] ?? null, $status, $data['remarks'] ?? null]
+        'INSERT INTO contractor_documents (uid, panchayat_id, contractor_id, doc_type, doc_name, issued_date, expiry_date, expiry_status, remarks)
+         VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), $contractor['panchayat_id'] ?? actor_panchayat_id($actor), $contractorId, $data['doc_type'] ?? 'other', $data['doc_name'] ?? 'Document', date_or_null($data['issued_date'] ?? null), date_or_null($data['expiry_date'] ?? null), $status, $data['remarks'] ?? null]
     );
     audit_record('contractor.document.add', 'contractor', $contractorId, $data['doc_name'] ?? null);
     return DB::one('SELECT * FROM contractor_documents WHERE id = ?', [$id]);
@@ -314,14 +333,15 @@ function tender_get(int $id): array
     if (!$t) {
         throw not_found('Tender not found');
     }
+    scope_assert_row($t, null, 'tender');
     return $t;
 }
 
 function tender_snapshot(int $tenderId, int $versionNo, string $changeType, string $reason, array $tender, array $actor): void
 {
     DB::insert(
-        'INSERT INTO tender_versions (uid, tender_id, version_no, change_type, reason, snapshot, changed_by) VALUES (?,?,?,?,?,?,?)',
-        [uid(), $tenderId, $versionNo, $changeType, $reason, json_store($tender), (int) $actor['id']]
+        'INSERT INTO tender_versions (uid, panchayat_id, tender_id, version_no, change_type, reason, snapshot, changed_by) VALUES (?,?,?,?,?,?,?,?)',
+        [uid(), $tender['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $versionNo, $changeType, $reason, json_store($tender), (int) $actor['id']]
     );
 }
 
@@ -352,16 +372,29 @@ function tender_create(array $data, array $actor): array
     if (empty($data['procurement_category']) || empty($data['tender_type'])) {
         throw validation('Procurement category and tender type are required');
     }
-    $number = num_next_tender_number((int) $fy['id']);
+    $title = trim((string) ($data['title'] ?: ($data['work_name'] ?? '')));
+    if ($title === '') {
+        throw validation('Tender title/work name is required');
+    }
+    $pid = actor_panchayat_id($actor);
+    $projectId = int_or_null($data['project_id'] ?? null);
+    if ($projectId) {
+        $project = project_get($projectId);
+        if ((int) $project['fy_id'] !== (int) $fy['id']) {
+            throw conflict('Linked project belongs to a different financial year.');
+        }
+        $pid = $project['panchayat_id'] ?? $pid;
+    }
+    $number = num_next_tender_number((int) $fy['id'], $pid);
     $id = DB::insert(
         'INSERT INTO tenders
-           (uid, fy_id, project_id, scheme_id, fund_id, ruleset_id, tender_number, tender_type, procurement_category,
+           (uid, panchayat_id, fy_id, project_id, scheme_id, fund_id, ruleset_id, tender_number, tender_type, procurement_category,
             procurement_method, title, description, location, work_name, status, workflow_stage, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), (int) $fy['id'], int_or_null($data['project_id'] ?? null), int_or_null($data['scheme_id'] ?? null), int_or_null($data['fund_id'] ?? null),
+            uid(), $pid, (int) $fy['id'], $projectId, int_or_null($data['scheme_id'] ?? null), int_or_null($data['fund_id'] ?? null),
             int_or_null($data['ruleset_id'] ?? null), $number, $data['tender_type'], $data['procurement_category'],
-            $data['procurement_method'] ?? null, $data['title'] ?: ($data['work_name'] ?? 'Untitled tender'),
+            $data['procurement_method'] ?? null, $title,
             $data['description'] ?? null, $data['location'] ?? null, $data['work_name'] ?? ($data['title'] ?? null),
             'draft', 'draft', (int) $actor['id'],
         ]
@@ -385,27 +418,49 @@ const TENDER_EDITABLE_FIELDS = [
     'publication_date', 'bid_start_date', 'bid_close_date', 'technical_open_date', 'financial_open_date', 'bid_validity_days',
 ];
 
+const TENDER_DATE_FIELDS = ['admin_approval_date', 'tech_sanction_date', 'publication_date', 'bid_start_date', 'bid_close_date', 'technical_open_date', 'financial_open_date'];
+
 function tender_update(int $id, array $fields, array $actor): array
 {
     $t = tender_get($id);
     if ($t['status'] !== 'draft') {
         throw conflict('Tender is in "' . $t['status'] . '" status and is locked. Use the corrigendum process for changes.');
     }
+    if (isset($fields['project_id']) && $fields['project_id'] !== '' && $fields['project_id'] !== null) {
+        $project = project_get((int) $fields['project_id']);
+        if ($project['panchayat_id'] !== null && $t['panchayat_id'] !== null && (int) $project['panchayat_id'] !== (int) $t['panchayat_id']) {
+            throw forbidden('Linked project belongs to another Panchayat.');
+        }
+    }
     $sets = [];
     $params = [];
+    $candidate = $t;
     foreach ($fields as $k => $v) {
         if (!in_array($k, TENDER_EDITABLE_FIELDS, true)) {
             continue;
         }
+        $value = in_array($k, TENDER_DATE_FIELDS, true) ? date_or_null($v) : ($v === '' ? null : $v);
         $sets[] = "$k = ?";
-        $params[] = $v === '' ? null : $v;
+        $params[] = $value;
+        $candidate[$k] = $value;
     }
+    if (isset($candidate['project_id']) && $candidate['project_id'] !== null && $candidate['project_id'] !== '') {
+        $linked = project_get((int) $candidate['project_id']);
+        if ((int) $linked['fy_id'] !== (int) $candidate['fy_id']) {
+            throw conflict('Linked project belongs to a different financial year.');
+        }
+    }
+    foreach (['estimated_cost_minor','tender_value_minor','emd_minor','tender_fee_minor','security_deposit_minor'] as $amountField) {
+        if (array_key_exists($amountField, $candidate) && $candidate[$amountField] !== null && (int) $candidate[$amountField] < 0) {
+            throw validation(str_replace('_', ' ', $amountField) . ' cannot be negative.');
+        }
+    }
+    tender_validate_dates($candidate);
     if ($sets) {
         $params[] = $id;
         DB::run('UPDATE tenders SET ' . implode(', ', $sets) . ' WHERE id = ?', $params);
     }
     $fresh = tender_get($id);
-    tender_validate_dates($fresh);
     tender_snapshot($id, tender_next_version($id), 'update', 'Tender fields updated', $fresh, $actor);
     audit_record('tender.update', 'tender', $id, $fresh['tender_number']);
     return $fresh;
@@ -427,6 +482,10 @@ function tender_submit(int $id, array $actor): array
     }
     if ((int) DB::val('SELECT COUNT(*) FROM boq_items WHERE tender_id = ?', [$id]) === 0) {
         throw conflict('At least one BOQ item is required before submission');
+    }
+    $check = compliance_evaluate_tender($t, ['persist' => true, 'actorId' => (int) $actor['id']]);
+    if (($check['summary']['blocking'] ?? 0) > 0) {
+        throw conflict('Cannot proceed: blocking system check(s) remain. Open Compliance for exact reasons.');
     }
     DB::run("UPDATE tenders SET status = 'under_approval', workflow_stage = 'under_approval' WHERE id = ?", [$id]);
     workflow_init('tender', $id, ['reset' => true]);
@@ -464,8 +523,8 @@ function tender_generate_nit(int $id, array $actor): array
     $doc = document_generate_nit($id, $actor);
     $vn = (int) DB::val('SELECT MAX(version_no) FROM nit_versions WHERE tender_id = ?', [$id]) + 1;
     DB::insert(
-        'INSERT INTO nit_versions (uid, tender_id, version_no, content_json, generated_by, document_id) VALUES (?,?,?,?,?,?)',
-        [uid(), $id, $vn, json_store(doc_nit_merge_data($id)), (int) $actor['id'], $doc['id']]
+        'INSERT INTO nit_versions (uid, panchayat_id, tender_id, version_no, content_json, generated_by, document_id) VALUES (?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $id, $vn, json_store(doc_nit_merge_data($id)), (int) $actor['id'], $doc['id']]
     );
     DB::run("UPDATE tenders SET nit_number = COALESCE(nit_number, tender_number), status = CASE WHEN status = 'approved' THEN 'nit_generated' ELSE status END WHERE id = ?", [$id]);
     tender_snapshot($id, tender_next_version($id), 'nit_generate', 'NIT generated', tender_get($id), $actor);
@@ -476,16 +535,16 @@ function tender_generate_nit(int $id, array $actor): array
 function tender_publish(int $id, array $data, array $actor): array
 {
     $t = tender_get($id);
-    if (!in_array($t['status'], ['approved', 'nit_generated'], true)) {
-        throw conflict('Tender must be approved (and NIT generated) before publication');
+    if ($t['status'] !== 'nit_generated') {
+        throw conflict('Tender must be approved and NIT generated before publication');
     }
-    $pubDate = $data['publication_date'] ?? $t['publication_date'] ?? today_iso();
+    $pubDate = date_or_null($data['publication_date'] ?? null) ?? ($t['publication_date'] ?: today_iso());
     DB::run("UPDATE tenders SET status = 'published', publication_date = ?, workflow_stage = 'published' WHERE id = ?", [$pubDate, $id]);
     if (!empty($data['official_portal']) || !empty($data['external_tender_id'])) {
         DB::insert(
-            'INSERT INTO external_refs (uid, entity_type, entity_id, official_portal, external_tender_id, external_reference_no, publication_status, official_url, sync_method)
-             VALUES (?,?,?,?,?,?,?,?,?)',
-            [uid(), 'tender', $id, $data['official_portal'] ?? null, $data['external_tender_id'] ?? null, $data['external_reference_no'] ?? null, $data['publication_status'] ?? null, $data['official_url'] ?? null, $data['sync_method'] ?? 'manual']
+            'INSERT INTO external_refs (uid, panchayat_id, entity_type, entity_id, official_portal, external_tender_id, external_reference_no, publication_status, official_url, sync_method)
+             VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), 'tender', $id, $data['official_portal'] ?? null, $data['external_tender_id'] ?? null, $data['external_reference_no'] ?? null, $data['publication_status'] ?? null, $data['official_url'] ?? null, $data['sync_method'] ?? 'manual']
         );
     }
     tender_snapshot($id, tender_next_version($id), 'publish', 'Tender published', tender_get($id), $actor);
@@ -528,8 +587,8 @@ function tender_cancel(int $id, array $data, array $actor): array
         throw validation('Cancellation reason is required');
     }
     DB::insert(
-        'INSERT INTO tender_cancellations (uid, tender_id, reason, authority, cancel_date, created_by) VALUES (?,?,?,?,?,?)',
-        [uid(), $id, $data['reason'], $data['authority'] ?? null, $data['cancel_date'] ?? today_iso(), (int) $actor['id']]
+        'INSERT INTO tender_cancellations (uid, panchayat_id, tender_id, reason, authority, cancel_date, created_by) VALUES (?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $id, $data['reason'], $data['authority'] ?? null, date_or_null($data['cancel_date'] ?? null) ?? today_iso(), (int) $actor['id']]
     );
     DB::run("UPDATE tenders SET status = 'cancelled' WHERE id = ?", [$id]);
     DB::run("UPDATE approval_steps SET status = 'cancelled' WHERE entity_type = 'tender' AND entity_id = ? AND status IN ('pending','in_progress')", [$id]);
@@ -549,8 +608,8 @@ function tender_corrigendum(int $id, array $data, array $actor): array
     }
     $num = num_next_corrigendum($id);
     $cid = DB::insert(
-        'INSERT INTO corrigenda (uid, tender_id, corrigendum_number, reason, changes, new_dates, created_by) VALUES (?,?,?,?,?,?,?)',
-        [uid(), $id, $num, $data['reason'] ?? '', json_store($data['changes']), json_store($data['new_dates'] ?? []), (int) $actor['id']]
+        'INSERT INTO corrigenda (uid, panchayat_id, tender_id, corrigendum_number, reason, changes, new_dates, created_by) VALUES (?,?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $id, $num, $data['reason'] ?? '', json_store($data['changes']), json_store($data['new_dates'] ?? []), (int) $actor['id']]
     );
     tender_snapshot($id, tender_next_version($id), 'corrigendum', "Corrigendum $num", $t, $actor);
     audit_record('tender.corrigendum', 'tender', $id, $t['tender_number'] . ' (' . $num . ')', ['reason' => $data['reason'] ?? null]);
@@ -563,10 +622,10 @@ function tender_retender(int $id, array $data, array $actor): array
     if (in_array($t['status'], ['retendered', 'awarded', 'closed'], true)) {
         throw conflict('Cannot re-tender from this status');
     }
-    $number = num_next_tender_number((int) $t['fy_id']);
+    $number = num_next_tender_number((int) $t['fy_id'], $t['panchayat_id'] !== null ? (int) $t['panchayat_id'] : null);
     $newId = DB::insert(
         'INSERT INTO tenders
-           (uid, fy_id, project_id, scheme_id, fund_id, ruleset_id, tender_number, tender_type, procurement_category,
+           (uid, panchayat_id, fy_id, project_id, scheme_id, fund_id, ruleset_id, tender_number, tender_type, procurement_category,
             procurement_method, title, description, location, work_name,
             admin_approval_no, admin_approval_date, admin_approval_authority, admin_approval_amount_minor,
             tech_sanction_no, tech_sanction_date, tech_sanction_authority, tech_sanction_amount_minor,
@@ -574,9 +633,9 @@ function tender_retender(int $id, array $data, array $actor): array
             completion_period_days, technical_specification, eligibility_notes, general_conditions, special_conditions,
             payment_conditions, completion_conditions, extension_conditions, penalty_provisions, defect_liability,
             status, workflow_stage, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), $t['fy_id'], $t['project_id'], $t['scheme_id'], $t['fund_id'], $t['ruleset_id'], $number, $t['tender_type'], $t['procurement_category'],
+            uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $t['fy_id'], $t['project_id'], $t['scheme_id'], $t['fund_id'], $t['ruleset_id'], $number, $t['tender_type'], $t['procurement_category'],
             $t['procurement_method'], $t['title'] . ' (Re-Tender)', $t['description'], $t['location'], $t['work_name'],
             $t['admin_approval_no'], $t['admin_approval_date'], $t['admin_approval_authority'], $t['admin_approval_amount_minor'],
             $t['tech_sanction_no'], $t['tech_sanction_date'], $t['tech_sanction_authority'], $t['tech_sanction_amount_minor'],
@@ -588,14 +647,14 @@ function tender_retender(int $id, array $data, array $actor): array
     );
     foreach (DB::all('SELECT * FROM boq_items WHERE tender_id = ?', [$id]) as $item) {
         DB::insert(
-            'INSERT INTO boq_items (uid, tender_id, item_no, group_name, description, specification, unit, quantity, estimated_rate_minor, tax_pct, sort_order)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-            [uid(), $newId, $item['item_no'], $item['group_name'], $item['description'], $item['specification'], $item['unit'], $item['quantity'], $item['estimated_rate_minor'], $item['tax_pct'], $item['sort_order']]
+            'INSERT INTO boq_items (uid, panchayat_id, tender_id, item_no, group_name, description, specification, unit, quantity, estimated_rate_minor, tax_pct, sort_order)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $newId, $item['item_no'], $item['group_name'], $item['description'], $item['specification'], $item['unit'], $item['quantity'], $item['estimated_rate_minor'], $item['tax_pct'], $item['sort_order']]
         );
     }
     DB::insert(
-        'INSERT INTO retenders (uid, original_tender_id, new_tender_id, reason, carry_forward, created_by) VALUES (?,?,?,?,?,?)',
-        [uid(), $id, $newId, $data['reason'] ?? null, json_store($data['carry_forward'] ?? []), (int) $actor['id']]
+        'INSERT INTO retenders (uid, panchayat_id, original_tender_id, new_tender_id, reason, carry_forward, created_by) VALUES (?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $id, $newId, $data['reason'] ?? null, json_store($data['carry_forward'] ?? []), (int) $actor['id']]
     );
     DB::run("UPDATE tenders SET status = 'retendered' WHERE id = ?", [$id]);
     tender_snapshot($id, tender_next_version($id), 'retender', 'Re-tendered to ' . $number, $t, $actor);
@@ -619,10 +678,7 @@ function bidder_list(int $tenderId): array
 
 function bidder_add(int $tenderId, array $data, array $actor): array
 {
-    $t = DB::one('SELECT * FROM tenders WHERE id = ?', [$tenderId]);
-    if (!$t) {
-        throw not_found('Tender not found');
-    }
+    $t = tender_get($tenderId);
     if (!in_array($t['status'], ['bidding', 'bid_closed', 'technical_evaluation'], true)) {
         throw conflict('Bidders can only be recorded once bidding has started');
     }
@@ -635,9 +691,9 @@ function bidder_add(int $tenderId, array $data, array $actor): array
         throw conflict('Contractor is already recorded as a bidder');
     }
     $id = DB::insert(
-        'INSERT INTO tender_bidders (uid, tender_id, contractor_id, bidder_label, submission_time, emd_paid_minor, emd_details, created_by)
-         VALUES (?,?,?,?,?,?,?,?)',
-        [uid(), $tenderId, $contractorId, $data['bidder_label'] ?? $c['legal_name'], $data['submission_time'] ?? now_iso(), minor($data['emd_paid_minor'] ?? null), $data['emd_details'] ?? null, (int) $actor['id']]
+        'INSERT INTO tender_bidders (uid, panchayat_id, tender_id, contractor_id, bidder_label, submission_time, emd_paid_minor, emd_details, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $contractorId, $data['bidder_label'] ?? $c['legal_name'], datetime_or_null($data['submission_time'] ?? null) ?? now_iso(), minor($data['emd_paid_minor'] ?? null), $data['emd_details'] ?? null, (int) $actor['id']]
     );
     audit_record('bid.record', 'tender_bidder', $id, $c['legal_name']);
     return DB::one('SELECT * FROM tender_bidders WHERE id = ?', [$id]);
@@ -645,16 +701,13 @@ function bidder_add(int $tenderId, array $data, array $actor): array
 
 function bidder_technical_open(int $tenderId, array $data, array $actor): array
 {
-    $t = DB::one('SELECT * FROM tenders WHERE id = ?', [$tenderId]);
-    if (!$t) {
-        throw not_found('Tender not found');
-    }
+    $t = tender_get($tenderId);
     if ($t['status'] !== 'bid_closed') {
         throw conflict('Bids must be closed before technical opening');
     }
     $id = DB::insert(
-        'INSERT INTO technical_openings (uid, tender_id, opening_date, opened_by, attendees, observations, status) VALUES (?,?,?,?,?,?,?)',
-        [uid(), $tenderId, $data['opening_date'] ?? today_iso(), (int) $actor['id'], json_store($data['attendees'] ?? []), $data['observations'] ?? null, 'completed']
+        'INSERT INTO technical_openings (uid, panchayat_id, tender_id, opening_date, opened_by, attendees, observations, status) VALUES (?,?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, date_or_null($data['opening_date'] ?? null) ?? today_iso(), (int) $actor['id'], json_store($data['attendees'] ?? []), $data['observations'] ?? null, 'completed']
     );
     DB::run("UPDATE tenders SET status = 'technical_evaluation' WHERE id = ?", [$tenderId]);
     DB::run("UPDATE tender_bidders SET bid_status = 'technical_opened' WHERE tender_id = ? AND bid_status = 'submitted'", [$tenderId]);
@@ -667,30 +720,53 @@ function criteria_list(int $tenderId): array
     return DB::all('SELECT * FROM evaluation_criteria WHERE tender_id = ? ORDER BY sort_order, id', [$tenderId]);
 }
 
-function criteria_add(int $tenderId, array $data): array
+function criteria_add(int $tenderId, array $data, ?array $actor = null): array
 {
+    $t = tender_get($tenderId);
+    if ($t['status'] !== 'technical_evaluation') {
+        throw conflict('Evaluation criteria can be added only during technical evaluation.');
+    }
+    if (trim((string) ($data['criterion'] ?? '')) === '') {
+        throw validation('Criterion is required.');
+    }
     $max = (int) DB::val('SELECT COALESCE(MAX(sort_order),0) FROM evaluation_criteria WHERE tender_id = ?', [$tenderId]);
     $id = DB::insert(
-        'INSERT INTO evaluation_criteria (uid, tender_id, code, criterion, requirement, is_required, sort_order) VALUES (?,?,?,?,?,?,?)',
-        [uid(), $tenderId, $data['code'] ?? ('C' . time()), $data['criterion'] ?? 'Criterion', $data['requirement'] ?? null, !empty($data['is_required']) ? 1 : 0, $max + 1]
+        'INSERT INTO evaluation_criteria (uid, panchayat_id, tender_id, code, criterion, requirement, is_required, sort_order) VALUES (?,?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $data['code'] ?? ('C' . time()), $data['criterion'] ?? 'Criterion', $data['requirement'] ?? null, !empty($data['is_required']) ? 1 : 0, $max + 1]
     );
     return DB::one('SELECT * FROM evaluation_criteria WHERE id = ?', [$id]);
 }
 
 function evaluation_set(int $tenderId, int $bidderId, int $criterionId, array $data, array $actor): array
 {
+    $t = tender_get($tenderId);
+    if ($t['status'] !== 'technical_evaluation') {
+        throw conflict('Technical evaluations can be recorded only during technical evaluation.');
+    }
+    $criterion = DB::one('SELECT * FROM evaluation_criteria WHERE id = ? AND tender_id = ?', [$criterionId, $tenderId]);
+    if (!$criterion) {
+        throw validation('Evaluation criterion does not belong to this tender');
+    }
+    $bidder = DB::one('SELECT * FROM tender_bidders WHERE id = ? AND tender_id = ?', [$bidderId, $tenderId]);
+    if (!$bidder) {
+        throw validation('Bidder does not belong to this tender');
+    }
+    $resultValue = (string) ($data['result'] ?? 'pass');
+    if (!in_array($resultValue, ['pass', 'fail', 'clarification_required', 'not_applicable', 'verification_required'], true)) {
+        throw validation('Invalid technical evaluation result.');
+    }
     $existing = DB::one('SELECT id FROM technical_evaluations WHERE bidder_id = ? AND criterion_id = ?', [$bidderId, $criterionId]);
     if ($existing) {
         DB::run(
             'UPDATE technical_evaluations SET result = ?, bidder_response = ?, remarks = ?, evaluated_by = ?, evaluated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [$data['result'] ?? 'pass', $data['bidder_response'] ?? null, $data['remarks'] ?? null, (int) $actor['id'], (int) $existing['id']]
+            [$resultValue, $data['bidder_response'] ?? null, $data['remarks'] ?? null, (int) $actor['id'], (int) $existing['id']]
         );
         return DB::one('SELECT * FROM technical_evaluations WHERE id = ?', [(int) $existing['id']]);
     }
     $id = DB::insert(
-        'INSERT INTO technical_evaluations (uid, tender_id, bidder_id, criterion_id, result, bidder_response, remarks, evaluated_by)
-         VALUES (?,?,?,?,?,?,?,?)',
-        [uid(), $tenderId, $bidderId, $criterionId, $data['result'] ?? 'pass', $data['bidder_response'] ?? null, $data['remarks'] ?? null, (int) $actor['id']]
+        'INSERT INTO technical_evaluations (uid, panchayat_id, tender_id, bidder_id, criterion_id, result, bidder_response, remarks, evaluated_by)
+         VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $bidderId, $criterionId, $resultValue, $data['bidder_response'] ?? null, $data['remarks'] ?? null, (int) $actor['id']]
     );
     return DB::one('SELECT * FROM technical_evaluations WHERE id = ?', [$id]);
 }
@@ -702,25 +778,36 @@ function evaluation_finalize(int $tenderId, array $data, array $actor): array
         throw conflict('Tender is not in technical evaluation');
     }
     $bidders = bidder_list($tenderId);
+    if (!$bidders) {
+        throw conflict('No bidders are recorded for this tender');
+    }
     $criteria = criteria_list($tenderId);
     if (!$criteria) {
         throw conflict('No evaluation criteria configured');
     }
+    $requiredCriterionIds = [];
+    foreach ($criteria as $c) { if ((int) $c['is_required'] === 1) { $requiredCriterionIds[(int) $c['id']] = $c['criterion']; } }
     $reasons = $data['rejection_reasons'] ?? [];
     foreach ($bidders as $b) {
         $evals = DB::all('SELECT * FROM technical_evaluations WHERE bidder_id = ?', [(int) $b['id']]);
+        $seen = [];
         $fail = [];
         $verify = [];
         foreach ($evals as $e) {
+            if ($e['criterion_id'] !== null) { $seen[(int) $e['criterion_id']] = true; }
             if ($e['result'] === 'fail') {
                 $fail[] = $e;
             } elseif ($e['result'] === 'verification_required') {
                 $verify[] = $e;
             }
         }
+        foreach ($requiredCriterionIds as $cid => $label) {
+            if (empty($seen[$cid])) {
+                throw conflict('Required criterion "' . $label . '" has not been evaluated for bidder ' . $b['legal_name']);
+            }
+        }
         if ($verify) {
-            $status = 'clarification_required';
-            $reason = 'Verification required on one or more criteria';
+            throw conflict('Verification-required technical criterion remains for bidder ' . $b['legal_name'] . '. Resolve it before finalising technical evaluation.');
         } elseif ($fail) {
             $status = 'technically_disqualified';
             $reason = $reasons[(int) $b['id']] ?? null;
@@ -740,14 +827,21 @@ function evaluation_finalize(int $tenderId, array $data, array $actor): array
 
 function financial_bid_record(int $tenderId, int $bidderId, array $data, array $actor): array
 {
+    $t = tender_get($tenderId);
+    if ($t['status'] !== 'financial_evaluation') {
+        throw conflict('Financial bids can be recorded only during financial evaluation.');
+    }
     $b = DB::one('SELECT * FROM tender_bidders WHERE id = ?', [$bidderId]);
     if (!$b || (int) $b['tender_id'] !== $tenderId) {
         throw validation('Bidder does not belong to this tender');
     }
-    if ($b['bid_status'] !== 'technically_qualified') {
+    if (!in_array($b['bid_status'], ['technically_qualified', 'financial_opened'], true)) {
         throw conflict('Only technically qualified bidders can have financial bids opened');
     }
     $total = (int) round((float) ($data['total_amount_minor'] ?? 0));
+    if ($total <= 0) {
+        throw validation('Financial bid total must be positive');
+    }
     $base = (int) round((float) ($data['base_amount_minor'] ?? 0));
     $tax = (int) round((float) ($data['tax_amount_minor'] ?? 0));
     $disc = (int) round((float) ($data['discount_minor'] ?? 0));
@@ -761,16 +855,16 @@ function financial_bid_record(int $tenderId, int $bidderId, array $data, array $
         DB::run('DELETE FROM financial_bid_items WHERE financial_bid_id = ?', [$fbId]);
     } else {
         $fbId = DB::insert(
-            'INSERT INTO financial_bids (uid, tender_id, bidder_id, total_amount_minor, base_amount_minor, tax_amount_minor, discount_minor, created_by)
-             VALUES (?,?,?,?,?,?,?,?)',
-            [uid(), $tenderId, $bidderId, $total, $base, $tax, $disc, (int) $actor['id']]
+            'INSERT INTO financial_bids (uid, panchayat_id, tender_id, bidder_id, total_amount_minor, base_amount_minor, tax_amount_minor, discount_minor, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?)',
+            [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $bidderId, $total, $base, $tax, $disc, (int) $actor['id']]
         );
     }
     foreach (($data['items'] ?? []) as $it) {
         DB::insert(
-            'INSERT INTO financial_bid_items (uid, financial_bid_id, boq_item_id, item_no, bidder_rate_minor, quantity, amount_minor)
-             VALUES (?,?,?,?,?,?,?)',
-            [uid(), $fbId, $it['boq_item_id'] ?? null, $it['item_no'] ?? null, (int) round((float) ($it['bidder_rate_minor'] ?? 0)), (float) ($it['quantity'] ?? 0), (int) round((float) ($it['amount_minor'] ?? 0))]
+            'INSERT INTO financial_bid_items (uid, panchayat_id, financial_bid_id, boq_item_id, item_no, bidder_rate_minor, quantity, amount_minor)
+             VALUES (?,?,?,?,?,?,?,?)',
+            [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $fbId, $it['boq_item_id'] ?? null, $it['item_no'] ?? null, (int) round((float) ($it['bidder_rate_minor'] ?? 0)), (float) ($it['quantity'] ?? 0), (int) round((float) ($it['amount_minor'] ?? 0))]
         );
     }
     DB::run("UPDATE tender_bidders SET bid_status = 'financial_opened' WHERE id = ?", [$bidderId]);
@@ -781,7 +875,13 @@ function financial_bid_record(int $tenderId, int $bidderId, array $data, array $
 function ranking_compute(int $tenderId, array $actor): array
 {
     $t = tender_get($tenderId);
+    if ($t['status'] !== 'financial_evaluation') {
+        throw conflict('Rankings can be computed only during financial evaluation.');
+    }
     $ranked = fin_rank_bids($tenderId);
+    if (!$ranked) {
+        throw conflict('No financial bids are recorded.');
+    }
     audit_record('evaluation.rank', 'tender', $tenderId, $t['tender_number'], ['newValue' => $ranked]);
     return $ranked;
 }
@@ -822,6 +922,7 @@ function award_get(int $id): array
     if (!$a) {
         throw not_found('Award not found');
     }
+    scope_assert_row($a, null, 'award');
     return $a;
 }
 
@@ -836,10 +937,16 @@ function award_recommend(int $tenderId, array $data, array $actor): array
     if (!$b) {
         throw conflict('Contractor is not a recorded bidder for this tender');
     }
-    if (!in_array($b['bid_status'], ['technically_qualified', 'financial_opened', 'awarded'], true)) {
-        throw conflict('Bidder is not technically qualified');
+    if (!in_array($b['bid_status'], ['financial_opened', 'awarded'], true)) {
+        throw conflict('Financial bid/ranking must be recorded before award recommendation');
+    }
+    if ($b['rank'] === null) {
+        throw conflict('Compute L1/L2/L3 rankings before award recommendation');
     }
     $amt = (int) round((float) ($data['awarded_amount_minor'] ?? 0));
+    if ($amt <= 0) {
+        throw validation('Award amount must be positive');
+    }
     $ceiling = (int) ($t['tech_sanction_amount_minor'] ?: $t['estimated_cost_minor']);
     if ($ceiling && $amt > $ceiling) {
         throw conflict('Award amount exceeds the approved/estimated amount');
@@ -853,9 +960,9 @@ function award_recommend(int $tenderId, array $data, array $actor): array
         $awardId = (int) $existing['id'];
     } else {
         $awardId = DB::insert(
-            'INSERT INTO awards (uid, tender_id, contractor_id, bidder_id, awarded_amount_minor, ' . sql_ident('rank') . ', status, remarks, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?)',
-            [uid(), $tenderId, $contractorId, (int) $b['id'], $amt, $b['rank'] !== null ? (int) $b['rank'] : null, 'recommended', $data['remarks'] ?? null, (int) $actor['id']]
+            'INSERT INTO awards (uid, panchayat_id, tender_id, contractor_id, bidder_id, awarded_amount_minor, ' . sql_ident('rank') . ', status, remarks, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [uid(), $t['panchayat_id'] ?? actor_panchayat_id($actor), $tenderId, $contractorId, (int) $b['id'], $amt, $b['rank'] !== null ? (int) $b['rank'] : null, 'recommended', $data['remarks'] ?? null, (int) $actor['id']]
         );
     }
     audit_record('award.recommend', 'tender', $tenderId, $t['tender_number'], ['newValue' => ['contractor_id' => $contractorId, 'amount' => $amt]]);
@@ -871,7 +978,7 @@ function award_approve(int $awardId, array $data, array $actor): array
     }
     DB::run(
         "UPDATE awards SET status = 'approved', approval_authority = ?, approval_date = ? WHERE id = ?",
-        [$data['authority'] ?? $actor['name'] ?? null, $data['date'] ?? today_iso(), $awardId]
+        [$data['authority'] ?? $actor['name'] ?? null, date_or_null($data['date'] ?? null) ?? today_iso(), $awardId]
     );
     DB::run("UPDATE tenders SET status = 'awarded' WHERE id = ?", [(int) $a['tender_id']]);
     DB::run("UPDATE tender_bidders SET bid_status = 'awarded' WHERE id = ?", [(int) $a['bidder_id']]);
@@ -886,7 +993,7 @@ function award_issue_loa(int $awardId, array $actor): array
         throw conflict('Award must be approved before LOA issuance');
     }
     $fyId = (int) DB::val('SELECT fy_id FROM tenders WHERE id = ?', [(int) $a['tender_id']]);
-    $loaNumber = num_next_loa($fyId);
+    $loaNumber = num_next_loa($fyId, $a['panchayat_id'] !== null ? (int) $a['panchayat_id'] : null);
     $doc = document_generate_loa($awardId, $loaNumber, $actor);
     DB::run("UPDATE awards SET loa_number = ?, loa_date = ?, status = 'loa_issued' WHERE id = ?", [$loaNumber, today_iso(), $awardId]);
     audit_record('award.loa', 'award', $awardId, $loaNumber);
@@ -900,18 +1007,22 @@ function award_create_agreement(int $awardId, array $data, array $actor): array
         throw conflict('Award must be approved/LOA issued before agreement');
     }
     $fyId = (int) DB::val('SELECT fy_id FROM tenders WHERE id = ?', [(int) $a['tender_id']]);
-    $agreementNumber = num_next_agreement($fyId);
+    $agreementNumber = num_next_agreement($fyId, $a['panchayat_id'] !== null ? (int) $a['panchayat_id'] : null);
     $id = DB::insert(
-        'INSERT INTO agreements (uid, tender_id, award_id, agreement_number, contractor_id, amount_minor, completion_period_days, conditions, security_deposit_minor, execution_date, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO agreements (uid, panchayat_id, tender_id, award_id, agreement_number, contractor_id, amount_minor, completion_period_days, conditions, security_deposit_minor, execution_date, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), (int) $a['tender_id'], $awardId, $agreementNumber, (int) $a['contractor_id'],
+            uid(), $a['panchayat_id'] ?? actor_panchayat_id($actor), (int) $a['tender_id'], $awardId, $agreementNumber, (int) $a['contractor_id'],
             (int) round((float) ($data['amount_minor'] ?? $a['awarded_amount_minor'])), $data['completion_period_days'] ?? null,
             $data['conditions'] ?? null, (int) round((float) ($data['security_deposit_minor'] ?? 0)),
-            $data['execution_date'] ?? today_iso(), (int) $actor['id'],
+            date_or_null($data['execution_date'] ?? null) ?? today_iso(), (int) $actor['id'],
         ]
     );
     DB::run("UPDATE awards SET agreement_id = ?, status = 'agreement_done' WHERE id = ?", [$id, $awardId]);
+    if (function_exists('document_generate_agreement')) {
+        $doc = document_generate_agreement($id, $actor);
+        DB::run('UPDATE agreements SET document_id = ? WHERE id = ?', [(int) $doc['id'], $id]);
+    }
     audit_record('agreement.create', 'agreement', $id, $agreementNumber);
     return DB::one('SELECT * FROM agreements WHERE id = ?', [$id]);
 }
@@ -922,16 +1033,16 @@ function award_issue_work_order(int $awardId, array $data, array $actor): array
     if ($a['status'] !== 'agreement_done') {
         throw conflict('Agreement must be executed before work order');
     }
-    $t = DB::one('SELECT * FROM tenders WHERE id = ?', [(int) $a['tender_id']]);
+    $t = tender_get((int) $a['tender_id']);
     $ag = DB::one('SELECT * FROM agreements WHERE id = ?', [(int) $a['agreement_id']]);
-    $woNumber = num_next_work_order((int) $t['fy_id']);
+    $woNumber = num_next_work_order((int) $t['fy_id'], $a['panchayat_id'] !== null ? (int) $a['panchayat_id'] : null);
     $id = DB::insert(
-        'INSERT INTO work_orders (uid, tender_id, award_id, agreement_id, project_id, contractor_id, work_order_number, amount_minor, start_date, completion_date, conditions, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO work_orders (uid, panchayat_id, tender_id, award_id, agreement_id, project_id, contractor_id, work_order_number, amount_minor, start_date, completion_date, conditions, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), (int) $a['tender_id'], $awardId, (int) $a['agreement_id'], $t['project_id'], (int) $a['contractor_id'], $woNumber,
+            uid(), $a['panchayat_id'] ?? $t['panchayat_id'] ?? actor_panchayat_id($actor), (int) $a['tender_id'], $awardId, (int) $a['agreement_id'], $t['project_id'], (int) $a['contractor_id'], $woNumber,
             $ag ? (int) $ag['amount_minor'] : (int) $a['awarded_amount_minor'],
-            $data['start_date'] ?? today_iso(), $data['completion_date'] ?? null, $data['conditions'] ?? null, (int) $actor['id'],
+            date_or_null($data['start_date'] ?? null) ?? today_iso(), date_or_null($data['completion_date'] ?? null), $data['conditions'] ?? null, (int) $actor['id'],
         ]
     );
     DB::run("UPDATE awards SET work_order_id = ?, status = 'work_order_issued' WHERE id = ?", [$id, $awardId]);
@@ -940,7 +1051,7 @@ function award_issue_work_order(int $awardId, array $data, array $actor): array
             'UPDATE projects SET contractor_id = ?, work_order_id = ?, awarded_amount_minor = ?, status = ?,
                start_date = COALESCE(start_date, ?), planned_completion_date = COALESCE(planned_completion_date, ?) WHERE id = ?',
             [(int) $a['contractor_id'], $id, $ag ? (int) $ag['amount_minor'] : (int) $a['awarded_amount_minor'], 'awarded',
-             $data['start_date'] ?? today_iso(), $data['completion_date'] ?? null, (int) $t['project_id']]
+             date_or_null($data['start_date'] ?? null) ?? today_iso(), date_or_null($data['completion_date'] ?? null), (int) $t['project_id']]
         );
     }
     audit_record('work_order.issue', 'work_order', $id, $woNumber);
@@ -953,19 +1064,20 @@ function award_issue_work_order(int $awardId, array $data, array $actor): array
 // ===========================================================================
 function execution_record_progress(int $projectId, array $data, array $actor): array
 {
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
-    if (!$p) {
-        throw not_found('Project not found');
+    $p = project_get($projectId);
+    if (in_array($p['status'], ['closed', 'cancelled'], true)) { throw conflict('Closed/cancelled projects cannot accept progress updates.'); }
+    if (!in_array($p['status'], ['awarded', 'in_progress', 'completed'], true) && empty($p['work_order_id'])) {
+        throw conflict('Progress can be recorded only after work order/award.');
     }
-    $date = $data['progress_date'] ?? today_iso();
-    $phys = (float) ($data['physical_progress'] ?? 0);
-    $fin = (float) ($data['financial_progress'] ?? 0);
+    $date = date_or_null($data['progress_date'] ?? null) ?? today_iso();
+    $phys = max(0, min(100, (float) ($data['physical_progress'] ?? 0)));
+    $fin = max(0, min(100, (float) ($data['financial_progress'] ?? 0)));
     $id = DB::insert(
-        'INSERT INTO work_progress (uid, project_id, progress_date, physical_progress, financial_progress, milestone, notes, created_by)
-         VALUES (?,?,?,?,?,?,?,?)',
-        [uid(), $projectId, $date, $phys, $fin, $data['milestone'] ?? null, $data['notes'] ?? null, (int) $actor['id']]
+        'INSERT INTO work_progress (uid, panchayat_id, project_id, progress_date, physical_progress, financial_progress, milestone, notes, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), $p['panchayat_id'] ?? actor_panchayat_id($actor), $projectId, $date, $phys, $fin, $data['milestone'] ?? null, $data['notes'] ?? null, (int) $actor['id']]
     );
-    DB::run('UPDATE projects SET physical_progress = ?, financial_progress = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [$phys, $fin, $projectId]);
+    DB::run("UPDATE projects SET physical_progress = ?, financial_progress = ?, status = CASE WHEN status = 'awarded' THEN 'in_progress' ELSE status END, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [$phys, $fin, $projectId]);
     if ($phys >= 100 && $p['status'] !== 'completed') {
         DB::run("UPDATE projects SET status = 'completed', actual_completion_date = ? WHERE id = ?", [$date, $projectId]);
     }
@@ -975,13 +1087,12 @@ function execution_record_progress(int $projectId, array $data, array $actor): a
 
 function execution_extension_request(int $projectId, array $data, array $actor): array
 {
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
-    if (!$p) {
-        throw not_found('Project not found');
-    }
+    $p = project_get($projectId);
+    $days = (int) ($data['requested_days'] ?? 0);
+    if ($days <= 0) { throw validation('Requested extension days must be positive'); }
     $id = DB::insert(
-        'INSERT INTO extension_requests (uid, project_id, requested_days, reason) VALUES (?,?,?,?)',
-        [uid(), $projectId, (int) ($data['requested_days'] ?? 0), $data['reason'] ?? '']
+        'INSERT INTO extension_requests (uid, panchayat_id, project_id, requested_days, reason) VALUES (?,?,?,?,?)',
+        [uid(), $p['panchayat_id'] ?? actor_panchayat_id($actor), $projectId, $days, $data['reason'] ?? '']
     );
     audit_record('execution.extension_request', 'project', $projectId, $p['work_name'], ['reason' => $data['reason'] ?? null]);
     return DB::one('SELECT * FROM extension_requests WHERE id = ?', [$id]);
@@ -989,16 +1100,16 @@ function execution_extension_request(int $projectId, array $data, array $actor):
 
 function measurement_create(int $projectId, array $data, array $actor): array
 {
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
-    if (!$p) {
-        throw not_found('Project not found');
+    $p = project_get($projectId);
+    if (!in_array($p['status'], ['awarded', 'in_progress', 'completed'], true) && empty($p['work_order_id'])) {
+        throw conflict('Measurements require an awarded work order or active execution stage.');
     }
     $tender = DB::one('SELECT * FROM tenders WHERE project_id = ? ORDER BY id DESC LIMIT 1', [$projectId]);
     $number = num_next_measurement($projectId);
     $id = DB::insert(
-        'INSERT INTO measurements (uid, project_id, tender_id, measurement_number, measurement_date, location, remarks, measured_by)
-         VALUES (?,?,?,?,?,?,?,?)',
-        [uid(), $projectId, $tender ? (int) $tender['id'] : null, $number, $data['measurement_date'] ?? today_iso(), $data['location'] ?? null, $data['remarks'] ?? null, (int) $actor['id']]
+        'INSERT INTO measurements (uid, panchayat_id, project_id, tender_id, measurement_number, measurement_date, location, remarks, measured_by)
+         VALUES (?,?,?,?,?,?,?,?,?)',
+        [uid(), $p['panchayat_id'] ?? actor_panchayat_id($actor), $projectId, $tender ? (int) $tender['id'] : null, $number, date_or_null($data['measurement_date'] ?? null) ?? today_iso(), $data['location'] ?? null, $data['remarks'] ?? null, (int) $actor['id']]
     );
     audit_record('measurement.create', 'measurement', $id, $number);
     return DB::one('SELECT * FROM measurements WHERE id = ?', [$id]);
@@ -1010,11 +1121,13 @@ function measurement_add_item(int $measurementId, array $data, array $actor): ar
     if (!$m) {
         throw not_found('Measurement not found');
     }
+    scope_assert_row($m, $actor, 'measurement');
     if (!in_array($m['status'], ['draft', 'checked'], true)) {
         throw conflict('Measurement is locked');
     }
     $prev = (float) ($data['previous_quantity'] ?? 0);
     $cur = (float) ($data['current_quantity'] ?? 0);
+    if ($prev < 0 || $cur <= 0) { throw validation('Measurement quantities must be positive (previous may be zero).'); }
     $cumulative = $prev + $cur;
     $overrun = 0;
     $boqItemId = int_or_null($data['boq_item_id'] ?? null);
@@ -1027,9 +1140,9 @@ function measurement_add_item(int $measurementId, array $data, array $actor): ar
     $rate = (int) round((float) ($data['rate_minor'] ?? 0));
     $amount = qty_rate($cur, $rate);
     $id = DB::insert(
-        'INSERT INTO measurement_items (uid, measurement_id, boq_item_id, item_no, description, unit, previous_quantity, current_quantity, cumulative_quantity, rate_minor, amount_minor, overrun_flag, remarks)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [uid(), $measurementId, $boqItemId, $data['item_no'] ?? null, $data['description'] ?? '', $data['unit'] ?? null, $prev, $cur, $cumulative, $rate, $amount, $overrun, $data['remarks'] ?? null]
+        'INSERT INTO measurement_items (uid, panchayat_id, measurement_id, boq_item_id, item_no, description, unit, previous_quantity, current_quantity, cumulative_quantity, rate_minor, amount_minor, overrun_flag, remarks)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [uid(), $m['panchayat_id'] ?? actor_panchayat_id($actor), $measurementId, $boqItemId, $data['item_no'] ?? null, $data['description'] ?? '', $data['unit'] ?? null, $prev, $cur, $cumulative, $rate, $amount, $overrun, $data['remarks'] ?? null]
     );
     audit_record('measurement.item_add', 'measurement', $measurementId, $m['measurement_number'] . ' item ' . ($data['item_no'] ?? ''), ['newValue' => ['currentQuantity' => $cur, 'overrun' => $overrun]]);
     return DB::one('SELECT * FROM measurement_items WHERE id = ?', [$id]);
@@ -1041,12 +1154,13 @@ function measurement_set_status(int $measurementId, string $status, array $actor
     if (!$m) {
         throw not_found('Measurement not found');
     }
+    scope_assert_row($m, $actor, 'measurement');
     if (!in_array($status, ['checked', 'approved', 'final'], true)) {
         throw validation('Invalid measurement status');
     }
     $order = ['draft' => 0, 'checked' => 1, 'approved' => 2, 'final' => 3];
-    if (($order[$status] ?? 0) < ($order[$m['status']] ?? 0)) {
-        throw conflict('Cannot move measurement backwards');
+    if (($order[$status] ?? 0) !== (($order[$m['status']] ?? 0) + 1)) {
+        throw conflict('Measurement status must advance one step at a time.');
     }
     if ($status === 'checked') {
         DB::run('UPDATE measurements SET status = ?, checked_by = ? WHERE id = ?', [$status, (int) $actor['id'], $measurementId]);
@@ -1059,18 +1173,18 @@ function measurement_set_status(int $measurementId, string $status, array $actor
 
 function bill_create(int $projectId, array $data, array $actor): array
 {
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
-    if (!$p) {
-        throw not_found('Project not found');
+    $p = project_get($projectId);
+    if (!in_array($p['status'], ['awarded', 'in_progress', 'completed', 'closed'], true) && !$p['work_order_id']) {
+        throw conflict('A work order/award is required before bills can be created.');
     }
-    $date = $data['bill_date'] ?? today_iso();
+    $date = date_or_null($data['bill_date'] ?? null) ?? today_iso();
     $fy = fy_resolve_for_date($date);
     $wo = DB::one('SELECT * FROM work_orders WHERE project_id = ? ORDER BY id DESC LIMIT 1', [$projectId]);
-    $number = num_next_bill_number((int) $fy['id']);
+    $number = num_next_bill_number((int) $fy['id'], $p['panchayat_id'] !== null ? (int) $p['panchayat_id'] : null);
     $id = DB::insert(
-        'INSERT INTO bills (uid, fy_id, project_id, tender_id, work_order_id, contractor_id, bill_number, bill_type, bill_date, status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-        [uid(), (int) $fy['id'], $projectId, $wo ? (int) $wo['tender_id'] : null, $wo ? (int) $wo['id'] : null, $p['contractor_id'] !== null ? (int) $p['contractor_id'] : null, $number, $data['bill_type'] ?? 'running', $date, 'draft', (int) $actor['id']]
+        'INSERT INTO bills (uid, panchayat_id, fy_id, project_id, tender_id, work_order_id, contractor_id, bill_number, bill_type, bill_date, status, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        [uid(), $p['panchayat_id'] ?? actor_panchayat_id($actor), (int) $fy['id'], $projectId, $wo ? (int) $wo['tender_id'] : null, $wo ? (int) $wo['id'] : null, $p['contractor_id'] !== null ? (int) $p['contractor_id'] : null, $number, $data['bill_type'] ?? 'running', $date, 'draft', (int) $actor['id']]
     );
     audit_record('bill.create', 'bill', $id, $number);
     return DB::one('SELECT * FROM bills WHERE id = ?', [$id]);
@@ -1082,10 +1196,19 @@ function bill_update(int $billId, array $data, array $actor): array
     if (!$b) {
         throw not_found('Bill not found');
     }
+    scope_assert_row($b, $actor, 'bill');
     if ($b['status'] !== 'draft') {
         throw conflict('Only draft bills can be edited');
     }
     $c = fin_compute_bill($data);
+    if ($c['grossMinor'] < 0 || $c['previousCertifiedMinor'] < 0 || $c['currentMinor'] < 0) {
+        throw validation('Bill values cannot be negative and gross value must be at least previous certified amount.');
+    }
+    $project = DB::one('SELECT awarded_amount_minor, sanctioned_amount_minor FROM projects WHERE id = ?', [(int) $b['project_id']]);
+    $cap = (int) (($project['awarded_amount_minor'] ?? 0) ?: ($project['sanctioned_amount_minor'] ?? 0));
+    if ($cap > 0 && $c['cumulativeMinor'] > $cap) {
+        throw conflict('Bill cumulative value exceeds the awarded/sanctioned amount.');
+    }
     DB::run(
         'UPDATE bills SET gross_work_value_minor = ?, previous_certified_minor = ?, current_bill_minor = ?, cumulative_minor = ?,
            retention_minor = ?, tax_minor = ?, deductions_minor = ?, recoveries_minor = ?, net_payable_minor = ?, remarks = ?
@@ -1102,8 +1225,12 @@ function bill_submit(int $billId, array $actor): array
     if (!$b) {
         throw not_found('Bill not found');
     }
+    scope_assert_row($b, $actor, 'bill');
     if ($b['status'] !== 'draft') {
         throw conflict('Bill is not in draft');
+    }
+    if ((int) $b['net_payable_minor'] <= 0) {
+        throw conflict('Bill net payable must be calculated before submission.');
     }
     DB::run("UPDATE bills SET status = 'submitted' WHERE id = ?", [$billId]);
     workflow_init('bill', $billId, ['reset' => true]);
@@ -1118,6 +1245,7 @@ function bill_workflow_action(int $billId, string $action, ?string $remarks, arr
     if (!$b) {
         throw not_found('Bill not found');
     }
+    scope_assert_row($b, $actor, 'bill');
     if (!in_array($b['status'], ['submitted', 'checked', 'certified', 'returned'], true)) {
         throw conflict('Bill is not in a workflow state');
     }
@@ -1154,6 +1282,7 @@ function payment_record(int $billId, array $data, array $actor): array
     if (!$b) {
         throw not_found('Bill not found');
     }
+    scope_assert_row($b, $actor, 'bill');
     if (!in_array($b['status'], ['certified', 'approved'], true)) {
         throw conflict('Bill must be certified/approved before payment');
     }
@@ -1165,19 +1294,44 @@ function payment_record(int $billId, array $data, array $actor): array
         throw validation('Payment amount must be positive');
     }
     $certifiedNet = (int) $b['net_payable_minor'];
+    if ($certifiedNet <= 0) {
+        throw conflict('Certified bill amount must be greater than zero before payment.');
+    }
     if ($certifiedNet > 0 && $alreadyPaid + $net > $certifiedNet) {
         throw conflict('Payment would exceed the certified bill amount');
     }
-    $date = $data['payment_date'] ?? today_iso();
+    $paymentPanchayatId = $b['panchayat_id'] !== null ? (int) $b['panchayat_id'] : actor_panchayat_id($actor);
+    $txn = trim((string) ($data['transaction_reference'] ?? ''));
+    $txn = $txn === '' ? null : $txn;
+    if ($txn !== null) {
+        $sql = "SELECT id FROM payments WHERE transaction_reference = ? AND status != 'cancelled'";
+        $params = [$txn];
+        if ($paymentPanchayatId === null) { $sql .= ' AND panchayat_id IS NULL'; } else { $sql .= ' AND panchayat_id = ?'; $params[] = $paymentPanchayatId; }
+        if (DB::one($sql, $params)) {
+            throw conflict('A payment with this transaction reference is already recorded for this Panchayat.');
+        }
+    }
+    $date = date_or_null($data['payment_date'] ?? null) ?? today_iso();
     $fy = fy_resolve_for_date($date);
-    $count = (int) DB::val('SELECT COUNT(*) FROM payments WHERE fy_id = ?', [(int) $fy['id']]) + 1;
+    $params = [(int) $fy['id']];
+    $scopeSql = $paymentPanchayatId === null ? ' AND panchayat_id IS NULL' : ' AND panchayat_id = ?';
+    if ($paymentPanchayatId !== null) { $params[] = $paymentPanchayatId; }
+    $count = (int) DB::val('SELECT COUNT(*) FROM payments WHERE fy_id = ?' . $scopeSql, $params) + 1;
     $voucher = 'PVR/' . $fy['label'] . '/' . str_pad((string) $count, 4, '0', STR_PAD_LEFT);
+    while (true) {
+        $checkParams = [$voucher, (int) $fy['id']];
+        $checkScope = $paymentPanchayatId === null ? ' AND panchayat_id IS NULL' : ' AND panchayat_id = ?';
+        if ($paymentPanchayatId !== null) { $checkParams[] = $paymentPanchayatId; }
+        if (!DB::one('SELECT id FROM payments WHERE voucher_no = ? AND fy_id = ?' . $checkScope, $checkParams)) { break; }
+        $count++;
+        $voucher = 'PVR/' . $fy['label'] . '/' . str_pad((string) $count, 4, '0', STR_PAD_LEFT);
+    }
     $id = DB::insert(
-        'INSERT INTO payments (uid, fy_id, bill_id, project_id, contractor_id, voucher_no, payment_date, gross_amount_minor, deductions_minor, net_amount_minor, payment_method, transaction_reference, status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO payments (uid, panchayat_id, fy_id, bill_id, project_id, contractor_id, voucher_no, payment_date, gross_amount_minor, deductions_minor, net_amount_minor, payment_method, transaction_reference, status, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         [
-            uid(), (int) $fy['id'], $billId, $b['project_id'], $b['contractor_id'], $voucher, $date,
-            $gross, $ded, $net, $data['payment_method'] ?? null, $data['transaction_reference'] ?? null, 'recorded', (int) $actor['id'],
+            uid(), $paymentPanchayatId, (int) $fy['id'], $billId, $b['project_id'], $b['contractor_id'], $voucher, $date,
+            $gross, $ded, $net, $data['payment_method'] ?? null, $txn, 'recorded', (int) $actor['id'],
         ]
     );
     $totalPaid = $alreadyPaid + $net;
@@ -1192,19 +1346,17 @@ function completion_get_or_create(int $projectId): array
     if ($existing) {
         return $existing;
     }
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
-    if (!$p) {
-        throw not_found('Project not found');
-    }
+    $p = project_get($projectId);
     $tender = DB::one('SELECT * FROM tenders WHERE project_id = ? ORDER BY id DESC LIMIT 1', [$projectId]);
-    $id = DB::insert('INSERT INTO completions (uid, project_id, tender_id) VALUES (?,?,?)', [uid(), $projectId, $tender ? (int) $tender['id'] : null]);
+    $id = DB::insert('INSERT INTO completions (uid, panchayat_id, project_id, tender_id) VALUES (?,?,?,?)', [uid(), $p['panchayat_id'] ?? actor_panchayat_id(), $projectId, $tender ? (int) $tender['id'] : null]);
     return DB::one('SELECT * FROM completions WHERE id = ?', [$id]);
 }
 
 function completion_advance(int $projectId, array $data, array $actor): array
 {
     $comp = completion_get_or_create($projectId);
-    $p = DB::one('SELECT * FROM projects WHERE id = ?', [$projectId]);
+    scope_assert_row($comp, $actor, 'completion');
+    $p = project_get($projectId);
     $status = $data['status'] ?? '';
     $map = [
         'inspection_done' => 'inspection_date',
@@ -1217,12 +1369,40 @@ function completion_advance(int $projectId, array $data, array $actor): array
     if (!array_key_exists($status, $map)) {
         throw validation('Invalid completion status');
     }
-    $date = $data['date'] ?? today_iso();
+    $order = ['in_progress' => 0, 'inspection_done' => 1, 'final_measurement_done' => 2, 'final_bill_done' => 3, 'final_payment_done' => 4, 'security_released' => 5, 'closed' => 6];
+    if (($order[$status] ?? 0) !== (($order[$comp['status']] ?? 0) + 1)) {
+        throw conflict('Completion workflow must advance one step at a time.');
+    }
+    if ($status === 'final_measurement_done') {
+        $mid = (int) ($data['final_measurement_id'] ?? 0);
+        $m = $mid ? DB::one('SELECT * FROM measurements WHERE id = ? AND project_id = ?', [$mid, $projectId]) : null;
+        if (!$m || !in_array($m['status'], ['approved', 'final'], true)) {
+            throw conflict('An approved/final measurement for this project is required before recording final measurement completion.');
+        }
+    }
+    if ($status === 'final_bill_done') {
+        $bid = (int) ($data['final_bill_id'] ?? 0);
+        $b = $bid ? DB::one('SELECT * FROM bills WHERE id = ? AND project_id = ?', [$bid, $projectId]) : null;
+        if (!$b || !in_array($b['status'], ['approved', 'paid', 'partially_paid'], true)) {
+            throw conflict('An approved/paid bill for this project is required before recording final bill completion.');
+        }
+    }
+    if ($status === 'final_payment_done') {
+        $pid = (int) ($data['final_payment_id'] ?? 0);
+        $pay = $pid ? DB::one('SELECT * FROM payments WHERE id = ? AND project_id = ? AND status = ?', [$pid, $projectId, 'recorded']) : null;
+        if (!$pay) {
+            throw conflict('A recorded payment for this project is required before recording final payment completion.');
+        }
+    }
+    if ($status === 'closed' && (empty($comp['final_measurement_id']) || empty($comp['final_bill_id']) || empty($comp['final_payment_id']))) {
+        throw conflict('Final measurement, bill and payment must be recorded before closure.');
+    }
+    $date = date_or_null($data['date'] ?? null) ?? today_iso();
     $sets = ['status = ?'];
     $params = [$status];
     if ($map[$status] && ($data['date'] ?? null)) {
         $sets[] = $map[$status] . ' = ?';
-        $params[] = $data['date'];
+        $params[] = date_or_null($data['date']);
     }
     if (!empty($data['final_measurement_id'])) { $sets[] = 'final_measurement_id = ?'; $params[] = (int) $data['final_measurement_id']; }
     if (!empty($data['final_bill_id'])) { $sets[] = 'final_bill_id = ?'; $params[] = (int) $data['final_bill_id']; }
@@ -1231,6 +1411,7 @@ function completion_advance(int $projectId, array $data, array $actor): array
     DB::run('UPDATE completions SET ' . implode(', ', $sets) . ' WHERE id = ?', $params);
     if ($status === 'closed') {
         DB::run("UPDATE projects SET status = 'closed', actual_completion_date = ? WHERE id = ?", [$date, $projectId]);
+        DB::run("UPDATE tenders SET status = 'closed' WHERE project_id = ? AND status IN ('awarded','financial_evaluation','technical_evaluation')", [$projectId]);
     }
     audit_record('completion.' . $status, 'project', $projectId, $p['work_name']);
     return DB::one('SELECT * FROM completions WHERE id = ?', [(int) $comp['id']]);
@@ -1245,6 +1426,11 @@ function report_dashboard(?int $fyId): array
     $Fp = $fyId ? " AND p.fy_id = $fyId" : '';
     $Fb = $fyId ? " AND b.fy_id = $fyId" : '';
     $Fpay = $fyId ? " AND pay.fy_id = $fyId" : '';
+    $F .= panchayat_scope_sql('t');
+    $Fp .= panchayat_scope_sql('p');
+    $Fb .= panchayat_scope_sql('b');
+    $Fpay .= panchayat_scope_sql('pay');
+    $Faudit = panchayat_scope_sql('audit_logs');
 
     $tenderCounts = DB::one(
         "SELECT COUNT(*) total,
@@ -1270,7 +1456,7 @@ function report_dashboard(?int $fyId): array
     $bills = DB::one("SELECT COUNT(*) total, SUM(CASE WHEN status IN ('submitted','checked','certified','approved') THEN 1 ELSE 0 END) pending FROM bills b WHERE 1=1 $Fb");
     $paid = (int) DB::val("SELECT COALESCE(SUM(net_amount_minor),0) FROM payments pay WHERE pay.status='recorded' $Fpay");
     $awarded = (int) DB::val("SELECT COALESCE(SUM(a.awarded_amount_minor),0) FROM awards a JOIN tenders t ON t.id=a.tender_id WHERE a.status != 'cancelled' $F");
-    $complianceIssues = (int) DB::val("SELECT COUNT(*) FROM tenders t WHERE t.deleted_at IS NULL $F AND t.compliance_status IN ('blocking','warning')");
+    $complianceIssues = (int) DB::val("SELECT COUNT(*) FROM tenders t WHERE t.deleted_at IS NULL $F AND t.compliance_status IN ('blocking','warning','verification_required')");
     $pendingApprovals = (int) DB::val(
         "SELECT COUNT(*) FROM approval_steps aps JOIN tenders t ON t.id = aps.entity_id AND aps.entity_type='tender' WHERE aps.status IN ('pending','in_progress') $F"
     );
@@ -1284,13 +1470,14 @@ function report_dashboard(?int $fyId): array
         'complianceIssues' => $complianceIssues,
         'pendingApprovals' => $pendingApprovals,
         'statusPipeline' => DB::all("SELECT status, COUNT(*) c FROM tenders t WHERE t.deleted_at IS NULL $F GROUP BY status ORDER BY c DESC"),
-        'recentActivity' => DB::all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 12'),
+        'recentActivity' => DB::all('SELECT * FROM audit_logs WHERE 1=1' . $Faudit . ' ORDER BY id DESC LIMIT 12'),
     ];
 }
 
 function report_reconciliation(?int $fyId): array
 {
     $F = $fyId ? " AND t.fy_id = $fyId" : '';
+    $F .= panchayat_scope_sql('t');
     return DB::all(
         "SELECT t.id, t.tender_number, t.title, f.label fy_label,
                 t.estimated_cost_minor, t.tender_value_minor,

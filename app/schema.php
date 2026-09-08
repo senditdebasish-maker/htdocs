@@ -43,6 +43,17 @@ function schema_tables(): array
             ['fk', 'role_id', 'roles', 'CASCADE'], ['fk', 'permission_id', 'permissions', 'CASCADE'],
             ['pk', 'role_id', 'permission_id'],
         ],
+        'panchayats' => [
+            ['id'], ['uid'],
+            ['str', 'state', 60, false], ['str', 'district', 80, true], ['str', 'block', 80, true],
+            ['str', 'gram_panchayat', 160], ['str', 'gp_code', 40, true, true],
+            ['text', 'office_address'], ['str', 'pin', 10, true], ['str', 'phone', 40, true], ['str', 'email', 190, true],
+            ['str', 'pradhan', 120, true], ['str', 'upa_pradhan', 120, true], ['str', 'panchayat_secretary', 120, true],
+            ['str', 'technical_officer', 120, true], ['str', 'accounts_officer', 120, true],
+            ['text', 'letterhead_html', true], ['text', 'document_header_html', true], ['text', 'document_footer_html', true],
+            ['json', 'signature_config', true], ['json', 'seal_config', true],
+            ['bool', 'is_active', 1], ['ts', 'created_at'], ['ts', 'updated_at'],
+        ],
         'users' => [
             ['id'], ['uid'],
             ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true],
@@ -56,17 +67,6 @@ function schema_tables(): array
         'user_roles' => [
             ['fk', 'user_id', 'users', 'CASCADE'], ['fk', 'role_id', 'roles', 'CASCADE'],
             ['pk', 'user_id', 'role_id'],
-        ],
-        'panchayats' => [
-            ['id'], ['uid'],
-            ['str', 'state', 60, false], ['str', 'district', 80, true], ['str', 'block', 80, true],
-            ['str', 'gram_panchayat', 160], ['str', 'gp_code', 40, true, true],
-            ['text', 'office_address'], ['str', 'pin', 10, true], ['str', 'phone', 40, true], ['str', 'email', 190, true],
-            ['str', 'pradhan', 120, true], ['str', 'upa_pradhan', 120, true], ['str', 'panchayat_secretary', 120, true],
-            ['str', 'technical_officer', 120, true], ['str', 'accounts_officer', 120, true],
-            ['text', 'letterhead_html', true], ['text', 'document_header_html', true], ['text', 'document_footer_html', true],
-            ['json', 'signature_config', true], ['json', 'seal_config', true],
-            ['bool', 'is_active', 1], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'panchayat_members' => [
             ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'CASCADE'],
@@ -107,7 +107,7 @@ function schema_tables(): array
             ['str', 'version', 40, true], ['text', 'notes'], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'rule_evaluations' => [
-            ['id'], ['uid'], ['fk', 'ruleset_id', 'rulesets', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'ruleset_id', 'rulesets', 'SET NULL', true],
             ['str', 'entity_type', 40], ['int', 'entity_id'], ['text', 'results'], ['text', 'summary'],
             ['fk', 'evaluated_by', 'users', 'SET NULL', true], ['ts', 'evaluated_at'],
         ],
@@ -124,14 +124,14 @@ function schema_tables(): array
             ['bool', 'is_active', 1], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'budget_allocations' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
             ['fk', 'scheme_id', 'schemes', 'RESTRICT', true], ['fk', 'fund_id', 'funds', 'RESTRICT', true],
             ['big', 'sanctioned_amount_minor', 0], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'projects' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
             ['fk', 'scheme_id', 'schemes', 'RESTRICT', true], ['fk', 'fund_id', 'funds', 'RESTRICT', true],
-            ['str', 'head_of_account', 40, true], ['str', 'project_code', 60, true, true],
+            ['str', 'head_of_account', 40, true], ['str', 'project_code', 60, true, false],
             ['str', 'work_name', 255], ['text', 'description', true], ['str', 'location', 200, true],
             ['str', 'administrative_approval_no', 120, true], ['date', 'administrative_approval_date', true],
             ['str', 'administrative_approval_authority', 120, true], ['big', 'administrative_approval_amount_minor'],
@@ -146,7 +146,7 @@ function schema_tables(): array
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'], ['tsx', 'deleted_at', true],
         ],
         'procurement_plans' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
             ['fk', 'scheme_id', 'schemes', 'RESTRICT', true], ['fk', 'fund_id', 'funds', 'RESTRICT', true],
             ['fk', 'project_id', 'projects', 'SET NULL', true], ['str', 'work_name', 255],
             ['big', 'estimated_amount_minor', 0], ['str', 'funding_source', 120, true],
@@ -157,7 +157,7 @@ function schema_tables(): array
             ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'contractors' => [
-            ['id'], ['uid'], ['str', 'contractor_code', 40, true, true], ['str', 'legal_name', 200],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'contractor_code', 40, true, false], ['str', 'legal_name', 200],
             ['str', 'business_name', 200, true], ['text', 'address', true], ['str', 'mobile', 40, true],
             ['str', 'email', 190, true], ['str', 'registration_no', 120, true], ['str', 'registration_class', 60, true],
             ['date', 'registration_valid_from', true], ['date', 'registration_valid_to', true],
@@ -169,7 +169,7 @@ function schema_tables(): array
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'], ['tsx', 'deleted_at', true],
         ],
         'contractor_documents' => [
-            ['id'], ['uid'], ['fk', 'contractor_id', 'contractors', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'contractor_id', 'contractors', 'CASCADE'],
             ['str', 'doc_type', 40], ['str', 'doc_name', 200], ['int', 'document_id'],
             ['date', 'issued_date', true], ['date', 'expiry_date', true],
             ['enum', 'expiry_status', ['valid', 'expiring_soon', 'expired', 'verification_required', 'not_applicable'], 'valid'],
@@ -178,23 +178,17 @@ function schema_tables(): array
 
         // ================= v4 — documents/tenders/NIT/BOQ/versions =================
         'documents' => [
-            ['id'], ['uid'], ['str', 'entity_type', 40], ['int', 'entity_id'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'entity_type', 40], ['int', 'entity_id'],
             ['str', 'category', 60], ['str', 'original_name', 255], ['str', 'stored_name', 255],
             ['str', 'mime_type', 120, true], ['int', 'size_bytes'], ['str', 'sha256', 64, true],
             ['fk', 'uploaded_by', 'users', 'SET NULL', true], ['int', 'version', 1],
             ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
-        'tender_approval_docs' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'],
-            ['str', 'doc_kind', 40], ['str', 'doc_number', 120, true], ['date', 'doc_date', true],
-            ['big', 'amount_minor'], ['str', 'authority', 120, true], ['int', 'document_id'],
-            ['text', 'remarks'], ['ts', 'created_at'], ['ts', 'updated_at'],
-        ],
         'tenders' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'],
             ['fk', 'project_id', 'projects', 'SET NULL', true], ['fk', 'scheme_id', 'schemes', 'SET NULL', true],
             ['fk', 'fund_id', 'funds', 'SET NULL', true], ['fk', 'ruleset_id', 'rulesets', 'SET NULL', true],
-            ['str', 'tender_number', 80, false, true], ['str', 'nit_number', 80, true],
+            ['str', 'tender_number', 80, false, false], ['str', 'nit_number', 80, true, false],
             ['str', 'tender_type', 40], ['str', 'procurement_category', 40], ['str', 'procurement_method', 60, true],
             ['str', 'title', 255], ['text', 'description', true], ['str', 'location', 200, true], ['str', 'work_name', 255, true],
             ['str', 'admin_approval_no', 120, true], ['date', 'admin_approval_date', true], ['str', 'admin_approval_authority', 120, true],
@@ -215,32 +209,38 @@ function schema_tables(): array
             ['str', 'compliance_status', 20, true], ['str', 'workflow_stage', 40, false], ['int', 'award_recommendation_id'],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'], ['tsx', 'deleted_at', true],
         ],
+        'tender_approval_docs' => [
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'],
+            ['str', 'doc_kind', 40], ['str', 'doc_number', 120, true], ['date', 'doc_date', true],
+            ['big', 'amount_minor'], ['str', 'authority', 120, true], ['int', 'document_id'],
+            ['text', 'remarks'], ['ts', 'created_at'], ['ts', 'updated_at'],
+        ],
         'tender_versions' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
             ['str', 'change_type', 40], ['text', 'reason'], ['text', 'snapshot'],
             ['fk', 'changed_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'nit_versions' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
             ['int', 'template_id'], ['text', 'content_json'], ['fk', 'generated_by', 'users', 'SET NULL', true],
             ['int', 'document_id'], ['ts', 'generated_at'],
         ],
         'boq_items' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'],
             ['str', 'item_no', 40], ['str', 'group_name', 120, true], ['str', 'description', 500],
             ['text', 'specification', true], ['str', 'unit', 40, true], ['real', 'quantity', 0],
             ['big', 'estimated_rate_minor', 0], ['real', 'tax_pct', 0], ['int', 'sort_order', 0],
             ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'boq_versions' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['int', 'version_no'],
             ['bool', 'locked', 0], ['text', 'snapshot'], ['fk', 'locked_by', 'users', 'SET NULL', true],
             ['ts', 'created_at'],
         ],
 
         // ================= v5 — bidders/bids/evaluation/award =================
         'tender_bidders' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
             ['str', 'bidder_label', 200, true], ['tsx', 'submission_time'],
             ['enum', 'bid_status', ['submitted', 'technical_opened', 'technically_qualified', 'technically_disqualified', 'clarification_required', 'financial_opened', 'awarded', 'rejected', 'withdrawn'], 'submitted'],
             ['big', 'emd_paid_minor'], ['text', 'emd_details', true], ['json', 'technical_info', true], ['json', 'financial_info', true],
@@ -248,57 +248,57 @@ function schema_tables(): array
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'bid_documents' => [
-            ['id'], ['uid'], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
             ['str', 'doc_type', 40], ['int', 'document_id'], ['bool', 'is_confidential', 1], ['ts', 'created_at'],
         ],
         'technical_openings' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['date', 'opening_date'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['date', 'opening_date'],
             ['fk', 'opened_by', 'users', 'SET NULL', true], ['json', 'attendees', true], ['text', 'observations', true],
             ['int', 'minutes_document_id'], ['str', 'status', 20, false], ['ts', 'created_at'],
         ],
         'evaluation_criteria' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'],
             ['str', 'code', 64], ['str', 'criterion', 300], ['text', 'requirement', true],
             ['bool', 'is_required', 1], ['int', 'sort_order', 0], ['ts', 'created_at'],
         ],
         'technical_evaluations' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
             ['fk', 'criterion_id', 'evaluation_criteria', 'SET NULL', true],
             ['enum', 'result', ['pass', 'fail', 'clarification_required', 'not_applicable', 'verification_required'], 'pass'],
             ['text', 'bidder_response', true], ['text', 'remarks', true], ['int', 'evidence_document_id'],
             ['fk', 'evaluated_by', 'users', 'SET NULL', true], ['ts', 'evaluated_at'],
         ],
         'financial_bids' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['fk', 'bidder_id', 'tender_bidders', 'CASCADE'],
             ['big', 'total_amount_minor', 0], ['big', 'base_amount_minor', 0], ['big', 'tax_amount_minor', 0],
             ['big', 'discount_minor', 0], ['tsx', 'quoted_on', true], ['bool', 'is_confidential', 1],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'financial_bid_items' => [
-            ['id'], ['uid'], ['fk', 'financial_bid_id', 'financial_bids', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'financial_bid_id', 'financial_bids', 'CASCADE'],
             ['fk', 'boq_item_id', 'boq_items', 'SET NULL', true], ['str', 'item_no', 40, true],
             ['big', 'bidder_rate_minor', 0], ['real', 'quantity', 0], ['big', 'amount_minor', 0], ['ts', 'created_at'],
         ],
         'awards' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
             ['fk', 'bidder_id', 'tender_bidders', 'SET NULL', true], ['big', 'awarded_amount_minor', 0], ['int', 'rank'],
             ['str', 'approval_authority', 120, true], ['date', 'approval_date', true],
-            ['str', 'loa_number', 80, true, true], ['date', 'loa_date', true], ['big', 'security_deposit_minor'],
+            ['str', 'loa_number', 80, true, false], ['date', 'loa_date', true], ['big', 'security_deposit_minor'],
             ['int', 'agreement_id'], ['int', 'work_order_id'],
             ['enum', 'status', ['recommended', 'approved', 'loa_issued', 'agreement_done', 'work_order_issued', 'completed', 'cancelled'], 'recommended'],
             ['text', 'remarks', true], ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'agreements' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'award_id', 'awards', 'SET NULL', true],
-            ['str', 'agreement_number', 80, true, true], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'award_id', 'awards', 'SET NULL', true],
+            ['str', 'agreement_number', 80, true, false], ['fk', 'contractor_id', 'contractors', 'RESTRICT'],
             ['big', 'amount_minor', 0], ['int', 'completion_period_days'], ['text', 'conditions', true],
             ['big', 'security_deposit_minor'], ['date', 'execution_date', true], ['int', 'document_id'],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'work_orders' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'award_id', 'awards', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'RESTRICT'], ['fk', 'award_id', 'awards', 'SET NULL', true],
             ['fk', 'agreement_id', 'agreements', 'SET NULL', true], ['fk', 'project_id', 'projects', 'SET NULL', true],
-            ['fk', 'contractor_id', 'contractors', 'RESTRICT'], ['str', 'work_order_number', 80, true, true],
+            ['fk', 'contractor_id', 'contractors', 'RESTRICT'], ['str', 'work_order_number', 80, true, false],
             ['big', 'amount_minor', 0], ['date', 'start_date', true], ['date', 'completion_date', true],
             ['text', 'conditions', true], ['int', 'document_id'], ['fk', 'created_by', 'users', 'SET NULL', true],
             ['ts', 'created_at'], ['ts', 'updated_at'],
@@ -306,39 +306,39 @@ function schema_tables(): array
 
         // ================= v6 — execution/measurements/bills/payments/completion =================
         'work_progress' => [
-            ['id'], ['uid'], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
             ['date', 'progress_date'], ['real', 'physical_progress', 0], ['real', 'financial_progress', 0],
             ['str', 'milestone', 200, true], ['text', 'notes', true], ['int', 'site_photo_document_id'],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'site_instructions' => [
-            ['id'], ['uid'], ['fk', 'project_id', 'projects', 'CASCADE'], ['date', 'instruction_date'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'project_id', 'projects', 'CASCADE'], ['date', 'instruction_date'],
             ['text', 'instruction'], ['fk', 'issued_by', 'users', 'SET NULL', true], ['int', 'document_id'],
             ['ts', 'created_at'],
         ],
         'extension_requests' => [
-            ['id'], ['uid'], ['fk', 'project_id', 'projects', 'CASCADE'], ['int', 'requested_days', 0],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'project_id', 'projects', 'CASCADE'], ['int', 'requested_days', 0],
             ['text', 'reason'], ['enum', 'status', ['pending', 'approved', 'rejected'], 'pending'],
             ['fk', 'decided_by', 'users', 'SET NULL', true], ['tsx', 'decided_at', true], ['text', 'remarks'], ['ts', 'created_at'],
         ],
         'measurements' => [
-            ['id'], ['uid'], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
             ['str', 'measurement_number', 60], ['date', 'measurement_date'], ['str', 'location', 200, true],
             ['text', 'remarks', true], ['fk', 'measured_by', 'users', 'SET NULL', true],
             ['fk', 'checked_by', 'users', 'SET NULL', true], ['fk', 'approved_by', 'users', 'SET NULL', true],
             ['enum', 'status', ['draft', 'checked', 'approved', 'final'], 'draft'], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'measurement_items' => [
-            ['id'], ['uid'], ['fk', 'measurement_id', 'measurements', 'CASCADE'], ['fk', 'boq_item_id', 'boq_items', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'measurement_id', 'measurements', 'CASCADE'], ['fk', 'boq_item_id', 'boq_items', 'SET NULL', true],
             ['str', 'item_no', 40, true], ['str', 'description', 500], ['str', 'unit', 40, true],
             ['real', 'previous_quantity', 0], ['real', 'current_quantity', 0], ['real', 'cumulative_quantity', 0],
             ['big', 'rate_minor', 0], ['big', 'amount_minor', 0], ['bool', 'overrun_flag', 0], ['text', 'remarks', true],
             ['ts', 'created_at'],
         ],
         'bills' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'], ['fk', 'project_id', 'projects', 'CASCADE'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'], ['fk', 'project_id', 'projects', 'CASCADE'],
             ['fk', 'tender_id', 'tenders', 'SET NULL', true], ['fk', 'work_order_id', 'work_orders', 'SET NULL', true],
-            ['fk', 'contractor_id', 'contractors', 'SET NULL', true], ['str', 'bill_number', 60],
+            ['fk', 'contractor_id', 'contractors', 'SET NULL', true], ['str', 'bill_number', 60, false, false],
             ['enum', 'bill_type', ['running', 'final'], 'running'], ['date', 'bill_date'],
             ['big', 'gross_work_value_minor', 0], ['big', 'previous_certified_minor', 0], ['big', 'current_bill_minor', 0],
             ['big', 'cumulative_minor', 0], ['big', 'retention_minor', 0], ['big', 'tax_minor', 0],
@@ -348,22 +348,22 @@ function schema_tables(): array
             ['text', 'remarks', true], ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'bill_items' => [
-            ['id'], ['uid'], ['fk', 'bill_id', 'bills', 'CASCADE'], ['fk', 'measurement_item_id', 'measurement_items', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'bill_id', 'bills', 'CASCADE'], ['fk', 'measurement_item_id', 'measurement_items', 'SET NULL', true],
             ['str', 'item_no', 40, true], ['str', 'description', 500], ['real', 'quantity', 0], ['str', 'unit', 40, true],
             ['big', 'rate_minor', 0], ['big', 'amount_minor', 0], ['ts', 'created_at'],
         ],
         'payments' => [
-            ['id'], ['uid'], ['fk', 'fy_id', 'financial_years', 'RESTRICT'], ['fk', 'bill_id', 'bills', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'fy_id', 'financial_years', 'RESTRICT'], ['fk', 'bill_id', 'bills', 'SET NULL', true],
             ['fk', 'project_id', 'projects', 'SET NULL', true], ['fk', 'contractor_id', 'contractors', 'SET NULL', true],
-            ['str', 'voucher_no', 60, true], ['date', 'payment_date'],
+            ['str', 'voucher_no', 60, true, false], ['date', 'payment_date'],
             ['big', 'gross_amount_minor', 0], ['big', 'deductions_minor', 0], ['big', 'net_amount_minor', 0],
-            ['str', 'payment_method', 40, true], ['str', 'transaction_reference', 120, true],
+            ['str', 'payment_method', 40, true], ['str', 'transaction_reference', 120, true, false],
             ['enum', 'status', ['recorded', 'approved', 'cancelled'], 'recorded'],
             ['bool', 'is_bank_integrated', 0], ['str', 'approval_authority', 120, true], ['text', 'remarks', true],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'completions' => [
-            ['id'], ['uid'], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'project_id', 'projects', 'CASCADE'], ['fk', 'tender_id', 'tenders', 'SET NULL', true],
             ['date', 'completion_date', true], ['date', 'inspection_date', true],
             ['fk', 'final_measurement_id', 'measurements', 'SET NULL', true], ['fk', 'final_bill_id', 'bills', 'SET NULL', true],
             ['fk', 'final_payment_id', 'payments', 'SET NULL', true], ['date', 'security_release_date', true],
@@ -373,7 +373,7 @@ function schema_tables(): array
             ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'contractor_performance' => [
-            ['id'], ['uid'], ['fk', 'contractor_id', 'contractors', 'CASCADE'], ['fk', 'project_id', 'projects', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'contractor_id', 'contractors', 'CASCADE'], ['fk', 'project_id', 'projects', 'SET NULL', true],
             ['fk', 'tender_id', 'tenders', 'SET NULL', true], ['real', 'quality_rating'], ['real', 'timeliness_rating'],
             ['real', 'completion_rating'], ['text', 'defect_notes'], ['text', 'delay_notes'], ['text', 'extension_notes'],
             ['text', 'overall_remarks'], ['fk', 'rated_by', 'users', 'SET NULL', true], ['ts', 'rated_at'],
@@ -381,18 +381,18 @@ function schema_tables(): array
 
         // ================= v7 — corrigenda/cancellations/retenders/workflow/audit/etc =================
         'corrigenda' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['str', 'corrigendum_number', 60],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['str', 'corrigendum_number', 60],
             ['text', 'reason'], ['text', 'changes'], ['json', 'new_dates'],
             ['enum', 'status', ['draft', 'approved', 'published'], 'draft'], ['int', 'document_id'],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'tender_cancellations' => [
-            ['id'], ['uid'], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['text', 'reason'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'tender_id', 'tenders', 'CASCADE'], ['text', 'reason'],
             ['str', 'authority', 120, true], ['date', 'cancel_date', true], ['str', 'approval_authority', 120, true],
             ['int', 'notice_document_id'], ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'retenders' => [
-            ['id'], ['uid'], ['fk', 'original_tender_id', 'tenders', 'RESTRICT'], ['fk', 'new_tender_id', 'tenders', 'SET NULL', true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['fk', 'original_tender_id', 'tenders', 'RESTRICT'], ['fk', 'new_tender_id', 'tenders', 'SET NULL', true],
             ['text', 'reason', true], ['json', 'carry_forward'], ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'approval_steps' => [
@@ -413,7 +413,7 @@ function schema_tables(): array
             ['str', 'actor_role', 60, true], ['int', 'panchayat_id'], ['str', 'action', 100],
             ['str', 'entity_type', 40], ['int', 'entity_id'], ['str', 'entity_label', 255, true],
             ['text', 'old_value', true], ['text', 'new_value', true], ['text', 'reason', true],
-            ['str', 'ip_address', 64, true], ['text', 'user_agent', true], ['str', 'request_id', 64, true],
+            ['str', 'ip_address', 64, true], ['text', 'user_agent', true], ['str', 'request_id', 64, true], ['str', 'prev_hash', 64, true], ['str', 'entry_hash', 64, true],
             ['ts', 'created_at'],
         ],
         'numbering_sequences' => [
@@ -431,25 +431,25 @@ function schema_tables(): array
             ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'document_generations' => [
-            ['id'], ['uid'], ['str', 'doc_type', 60], ['str', 'entity_type', 40, true], ['int', 'entity_id'],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'doc_type', 60], ['str', 'entity_type', 40, true], ['int', 'entity_id'],
             ['int', 'template_id'], ['int', 'template_version'], ['int', 'document_id'],
             ['str', 'verification_code', 32, true], ['fk', 'generated_by', 'users', 'SET NULL', true], ['ts', 'generated_at'],
         ],
         'external_refs' => [
-            ['id'], ['uid'], ['str', 'entity_type', 40], ['int', 'entity_id'], ['str', 'official_portal', 200, true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'entity_type', 40], ['int', 'entity_id'], ['str', 'official_portal', 200, true],
             ['str', 'external_tender_id', 120, true], ['str', 'external_reference_no', 120, true],
             ['str', 'publication_status', 60, true], ['str', 'official_url', 500, true],
             ['tsx', 'publication_timestamp', true], ['str', 'external_status', 60, true], ['tsx', 'last_synced_at', true],
             ['str', 'sync_method', 20, false], ['ts', 'created_at'], ['ts', 'updated_at'],
         ],
         'imports' => [
-            ['id'], ['uid'], ['str', 'import_type', 60], ['str', 'file_name', 255, true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'import_type', 60], ['str', 'file_name', 255, true],
             ['enum', 'status', ['validating', 'preview', 'committed', 'failed'], 'validating'],
             ['int', 'total_rows', 0], ['int', 'valid_rows', 0], ['text', 'error_report'],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
         'backups' => [
-            ['id'], ['uid'], ['str', 'backup_type', 20, false], ['str', 'file_name', 255, true],
+            ['id'], ['uid'], ['fk', 'panchayat_id', 'panchayats', 'RESTRICT', true], ['str', 'backup_type', 20, false], ['str', 'file_name', 255, true],
             ['int', 'size_bytes'], ['str', 'status', 20, false], ['bool', 'verified', 0],
             ['fk', 'created_by', 'users', 'SET NULL', true], ['ts', 'created_at'],
         ],
@@ -588,7 +588,11 @@ function table_ddl(string $table): string
     if ($pks) {
         $lines[] = 'PRIMARY KEY (' . implode(', ', $pks) . ')';
     }
-    return 'CREATE TABLE ' . schema_quote($table) . " (\n  " . implode(",\n  ", $lines) . "\n)";
+    $ddl = 'CREATE TABLE ' . schema_quote($table) . " (\n  " . implode(",\n  ", $lines) . "\n)";
+    if (!DB::isSqlite()) {
+        $ddl .= ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
+    }
+    return $ddl;
 }
 
 /** Convert the DSL into CREATE TABLE statements for the active driver. */
@@ -599,6 +603,140 @@ function schema_ddl(): array
         $out[] = table_ddl($table);
     }
     return $out;
+}
+
+/** Secondary indexes for search, reports and tenant-scoped lists. */
+function schema_indexes(): array
+{
+    return [
+        ['idx_tenders_scope_fy_status', 'tenders', ['panchayat_id', 'fy_id', 'status']],
+        ['idx_rule_evaluations_scope', 'rule_evaluations', ['panchayat_id', 'entity_type', 'entity_id']],
+        ['idx_tenders_numbers', 'tenders', ['tender_number', 'nit_number']],
+        ['idx_projects_scope_fy_status', 'projects', ['panchayat_id', 'fy_id', 'status']],
+        ['idx_contractors_scope_status', 'contractors', ['panchayat_id', 'status']],
+        ['idx_documents_entity', 'documents', ['entity_type', 'entity_id', 'category']],
+        ['idx_document_generations_scope', 'document_generations', ['panchayat_id', 'doc_type', 'generated_at']],
+        ['idx_bidders_tender_status', 'tender_bidders', ['tender_id', 'bid_status']],
+        ['idx_financial_bids_tender', 'financial_bids', ['tender_id', 'bidder_id']],
+        ['idx_awards_tender_status', 'awards', ['tender_id', 'status']],
+        ['idx_bills_scope_fy_status', 'bills', ['panchayat_id', 'fy_id', 'status']],
+        ['idx_payments_scope_fy_status', 'payments', ['panchayat_id', 'fy_id', 'status']],
+        ['idx_audit_entity', 'audit_logs', ['entity_type', 'entity_id']],
+        ['idx_audit_scope_created', 'audit_logs', ['panchayat_id', 'created_at']],
+    ];
+}
+
+/** Composite unique indexes for scoped reference/document numbers. */
+function schema_unique_indexes(): array
+{
+    return [
+        ['ux_projects_scope_code', 'projects', ['panchayat_id', 'fy_id', 'project_code']],
+        ['ux_contractors_scope_code', 'contractors', ['panchayat_id', 'contractor_code']],
+        ['ux_tenders_scope_number', 'tenders', ['panchayat_id', 'fy_id', 'tender_number']],
+        ['ux_tenders_scope_nit', 'tenders', ['panchayat_id', 'fy_id', 'nit_number']],
+        ['ux_awards_scope_loa', 'awards', ['panchayat_id', 'loa_number']],
+        ['ux_agreements_scope_number', 'agreements', ['panchayat_id', 'agreement_number']],
+        ['ux_work_orders_scope_number', 'work_orders', ['panchayat_id', 'work_order_number']],
+        ['ux_bills_scope_number', 'bills', ['panchayat_id', 'fy_id', 'bill_number']],
+        ['ux_payments_scope_voucher', 'payments', ['panchayat_id', 'fy_id', 'voucher_no']],
+        ['ux_payments_scope_txref', 'payments', ['panchayat_id', 'transaction_reference']],
+        ['ux_numbering_sequences_scope', 'numbering_sequences', ['scope', 'fy_id', 'panchayat_id', 'prefix']],
+    ];
+}
+
+/** Create indexes idempotently; duplicate-index errors are ignored. */
+function schema_create_indexes(): void
+{
+    $pdo = DB::pdo();
+    $sets = [
+        [false, schema_indexes()],
+        [true, schema_unique_indexes()],
+    ];
+    foreach ($sets as [$unique, $indexes]) {
+        foreach ($indexes as [$name, $table, $cols]) {
+            $quotedCols = implode(', ', array_map('schema_quote', $cols));
+            $sql = 'CREATE ' . ($unique ? 'UNIQUE ' : '') . 'INDEX ' . schema_quote($name) . ' ON ' . schema_quote($table) . ' (' . $quotedCols . ')';
+            try {
+                $pdo->exec($sql);
+            } catch (Throwable $e) {
+                $msg = strtolower($e->getMessage());
+                // Existing upgraded installations may contain duplicates or old
+                // global UNIQUE constraints. Report via health docs; do not stop
+                // non-destructive repair from completing.
+                if (strpos($msg, 'duplicate') === false && strpos($msg, 'already exists') === false && strpos($msg, '1061') === false && strpos($msg, '23000') === false) {
+                    throw $e;
+                }
+            }
+        }
+    }
+}
+
+/** Backfill tenant columns for upgrades from a single-Panchayat installation. */
+function schema_backfill_panchayat_ids(): void
+{
+    $pid = DB::val('SELECT id FROM panchayats ORDER BY id LIMIT 1');
+    if ($pid === null) {
+        return;
+    }
+    foreach (schema_tables() as $table => $cols) {
+        $has = false;
+        foreach ($cols as $c) {
+            if (($c[1] ?? null) === 'panchayat_id') { $has = true; break; }
+        }
+        if ($has) {
+            try {
+                DB::run('UPDATE ' . schema_quote($table) . ' SET panchayat_id = ? WHERE panchayat_id IS NULL', [(int) $pid]);
+            } catch (Throwable $ignore) {
+                // ignore during early bootstrap when a table is not created yet
+            }
+        }
+    }
+}
+
+
+/** Drop old single-column UNIQUE indexes that were replaced by Panchayat/FY-scoped indexes. */
+function schema_drop_legacy_unique_indexes(): array
+{
+    if (DB::isSqlite()) {
+        return [];
+    }
+    $legacy = [
+        ['projects', 'project_code'],
+        ['procurement_plans', 'plan_number'],
+        ['contractors', 'contractor_code'],
+        ['tenders', 'tender_number'],
+        ['tenders', 'nit_number'],
+        ['awards', 'loa_number'],
+        ['agreements', 'agreement_number'],
+        ['work_orders', 'work_order_number'],
+        ['bills', 'bill_number'],
+        ['payments', 'voucher_no'],
+        ['payments', 'transaction_reference'],
+    ];
+    $dropped = [];
+    foreach ($legacy as [$table, $column]) {
+        try {
+            $indexes = DB::all(
+                'SELECT INDEX_NAME
+                   FROM INFORMATION_SCHEMA.STATISTICS
+                  WHERE TABLE_SCHEMA = DATABASE()
+                    AND TABLE_NAME = ?
+                    AND NON_UNIQUE = 0
+                  GROUP BY INDEX_NAME
+                 HAVING COUNT(*) = 1 AND MAX(COLUMN_NAME) = ? AND INDEX_NAME <> ?',
+                [$table, $column, 'PRIMARY']
+            );
+            foreach ($indexes as $idx) {
+                $name = $idx['INDEX_NAME'] ?? null;
+                if (!$name) { continue; }
+                DB::pdo()->exec('ALTER TABLE ' . schema_quote($table) . ' DROP INDEX ' . schema_quote((string) $name));
+                $dropped[] = $table . '.' . $name;
+            }
+        } catch (Throwable $ignore) {
+            // Keep repair non-destructive; scoped indexes may still be created on clean installs.
+        }
+    }
+    return $dropped;
 }
 
 /** Disable foreign-key enforcement; returns the statement that re-enables it. */
@@ -632,7 +770,7 @@ function db_columns(string $table): array
 /** Stable fingerprint of the schema definition (drift detection). */
 function schema_version(): string
 {
-    return substr(md5(serialize(schema_tables())), 0, 12);
+    return substr(md5(serialize([schema_tables(), schema_indexes(), schema_unique_indexes()])), 0, 12);
 }
 
 /** Compare the live database against the schema DSL. */
@@ -663,9 +801,9 @@ function schema_health(): array
  * then (re)seed idempotent reference data and stamp the schema version.
  * Returns a report of what was repaired.
  */
-function schema_heal(): array
+function schema_heal(?array $admin = null): array
 {
-    $report = ['created_tables' => [], 'added_columns' => [], 'seeded' => false];
+    $report = ['created_tables' => [], 'added_columns' => [], 'dropped_legacy_unique_indexes' => [], 'seeded' => false];
     $health = schema_health();
     $pdo = DB::pdo();
 
@@ -697,9 +835,12 @@ function schema_heal(): array
     }
 
     if ($report['created_tables'] || $report['added_columns'] || !schema_uptodate()) {
-        seed_all(false);
+        seed_all(false, $admin);
         $report['seeded'] = true;
     }
+    schema_backfill_panchayat_ids();
+    $report['dropped_legacy_unique_indexes'] = schema_drop_legacy_unique_indexes();
+    schema_create_indexes();
 
     schema_stamp();
     return $report;
@@ -748,6 +889,7 @@ function create_tables(bool $drop = false): void
         foreach (schema_ddl() as $ddl) {
             $pdo->exec($ddl);
         }
+        schema_create_indexes();
     } finally {
         $pdo->exec($restore);
     }

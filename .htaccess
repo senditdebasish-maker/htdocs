@@ -3,7 +3,7 @@ DirectoryIndex index.php
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
-  # Serve existing files/directories directly (assets, generated docs).
+  # Serve existing public files directly (assets); data/ remains denied by its own .htaccess.
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   # Route everything else through the front controller.

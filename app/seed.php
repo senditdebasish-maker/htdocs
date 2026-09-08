@@ -160,14 +160,26 @@ function seed_roles(): void
     }
 }
 
-function seed_admin(): void
+function seed_admin(?array $admin = null): void
 {
     if ((int) DB::val('SELECT COUNT(*) FROM users') > 0) return;
-    $email = strtolower(trim(SEED_ADMIN_EMAIL ?: 'admin@example.com'));
-    $pass = SEED_ADMIN_PASSWORD ?: 'Admin@12345';
+    $email = strtolower(trim((string) ($admin['email'] ?? SEED_ADMIN_EMAIL ?: 'admin@example.com')));
+    $name = trim((string) ($admin['name'] ?? 'System Administrator')) ?: 'System Administrator';
+    $pass = (string) ($admin['password'] ?? SEED_ADMIN_PASSWORD);
+    if ($pass === '') {
+        if (PHP_SAPI === 'cli') {
+            $pass = bin2hex(random_bytes(6)) . '@A1';
+            seed_log('[seed] generated one-time admin password: ' . $pass . ' (change immediately)');
+        } else {
+            throw validation('Create the administrator password in the installer; no default production password is shipped.');
+        }
+    }
+    if (strlen($pass) < 10 || !preg_match('/[A-Z]/', $pass) || !preg_match('/[a-z]/', $pass) || !preg_match('/[0-9]/', $pass)) {
+        throw validation('Administrator password must be at least 10 characters and include upper-case, lower-case and a number.');
+    }
     $userId = DB::insert(
-        'INSERT INTO users (uid, email, password_hash, name, designation, is_global_admin, is_active) VALUES (?,?,?,?,?,1,1)',
-        [uid(), $email, password_hash($pass, PASSWORD_DEFAULT), 'System Administrator', 'Super Admin']
+        'INSERT INTO users (uid, panchayat_id, email, password_hash, name, designation, is_global_admin, is_active) VALUES (?,?,?,?,?,?,1,1)',
+        [uid(), null, $email, password_hash_secure($pass), $name, 'Super Administrator']
     );
     $role = DB::one("SELECT id FROM roles WHERE code = 'super_admin'");
     DB::insert('INSERT INTO user_roles (user_id, role_id) VALUES (?,?)', [$userId, (int) $role['id']]);
@@ -207,9 +219,9 @@ function seed_rule_references(): void
 {
     if ((int) DB::val('SELECT COUNT(*) FROM rule_references') > 0) return;
     $refs = [
-        ['New Purchase Policy of West Bengal Government', 'Government of West Bengal, Finance Department (Audit Branch)', 'W.B. Financial Rules / Purchase Policy', 'No. 5400-F(Y)', '2012-06-25', '2012-06-25', 'https://wbxpress.com/new-purchase-policy/', 'as published', 'Manner of tender publication and minimum notice periods (7/14/21 days) for supply of articles/stores and execution of works & services. Verify current circulars.'],
-        ['Amendment of Rule 177 of WBFR regarding Tenders', 'Government of West Bengal, Finance Department', 'W.B. Financial Rules', 'WBFR Rule 177 (as amended)', '2014-04-27', '2014-04-27', 'https://wbxpress.com/amendment-rule-177-wbfr-tenders/', 'as amended', 'Mandatory e-tendering through https://wbtenders.gov.in for works valued at Rs. 5 lakh and above.'],
-        ['Guidelines for Short Notice Tender in Emergent Situations', 'Government of West Bengal, Irrigation & Waterways Directorate', 'I&WD Guidelines', 'Notification No. 5400-F(Y) dated 25.06.2012 / WBFR Rule 47(8)', '2012-06-25', '2012-06-25', 'https://wbxpress.com/guidelines-short-notice-tender-emergent-situations/', 'as published', 'Short-notice (3-day) off-line tenders for emergent works up to Rs. 10 lakh. Department-specific; verify applicability to Gram Panchayats.'],
+        ['New Purchase Policy of West Bengal Government', 'Government of West Bengal, Finance Department (Audit Branch)', 'W.B. Financial Rules / Purchase Policy', 'No. 5400-F(Y)', '2012-06-25', '2012-06-25', '', 'VERIFICATION REQUIRED', 'Reference summary is included for configurable system checks only. Verify the current official GoWB Finance/P&RD source before relying on this rule.'],
+        ['Amendment of Rule 177 of WBFR regarding Tenders', 'Government of West Bengal, Finance Department', 'W.B. Financial Rules', 'WBFR Rule 177 (as amended)', '2014-04-27', '2014-04-27', '', 'VERIFICATION REQUIRED', 'Reference summary is included for configurable system checks only. Verify the current official GoWB Finance/P&RD source before relying on this rule.'],
+        ['Guidelines for Short Notice Tender in Emergent Situations', 'Government of West Bengal, Irrigation & Waterways Directorate', 'I&WD Guidelines', 'Notification No. 5400-F(Y) dated 25.06.2012 / WBFR Rule 47(8)', '2012-06-25', '2012-06-25', '', 'VERIFICATION REQUIRED', 'Reference summary is included for configurable system checks only. Verify current official circulars and GP applicability before relying on this rule.'],
         ['WB e-Procurement System (two-bid)', 'Government of West Bengal — eProcurement System', 'e-NIT General Terms & Conditions', 'wbtenders.gov.in', null, null, 'https://wbtenders.gov.in/nicgep/app', 'current', 'e-Tenders use a two-bid system (technical + financial). Re-tender when response is fewer than three bidders. Department-specific; verify GP applicability.'],
         ['P&RD Department — Tenders', 'Department of Panchayats & Rural Development, Government of West Bengal', 'P&RD tender listings', 'prd.wb.gov.in/tenders', null, null, 'https://prd.wb.gov.in/tenders/list', 'current', 'Official P&RD tender listings. Consult for GP-specific tender conditions and formats.'],
     ];
@@ -228,9 +240,9 @@ function seed_default_ruleset(): void
     $rulesetId = DB::insert(
         'INSERT INTO rulesets (uid, name, issuing_authority, jurisdiction, effective_date, reference_number, source_url, version, is_active, notes)
          VALUES (?,?,?,?,?,?,?,1,1,?)',
-        [uid(), 'WB Gram Panchayat Procurement — Base Rule Set', 'Government of West Bengal (Finance Dept. / P&RD Dept.)', 'West Bengal',
+        [uid(), 'WB Gram Panchayat Procurement — Base Rule Set (Verification Required)', 'Government of West Bengal (Finance Dept. / P&RD Dept.)', 'West Bengal',
          '2012-06-25', 'WBFR + FD No. 5400-F(Y) dt 25.06.2012', 'https://prd.wb.gov.in/',
-         'This rule set encodes current published GoWB procurement norms as system checks. It does not constitute legal advice. Verify GP-specific circulars before relying on any rule.']
+         'This configurable starter rule set is provided for system checks only and is not legal advice. Rules marked VERIFICATION REQUIRED must be verified against current official GoWB/P&RD/Finance circulars before operational reliance.']
     );
     $refId = function (string $needle) {
         $r = DB::one('SELECT id FROM rule_references WHERE title LIKE ?', ['%' . $needle . '%']);
@@ -258,9 +270,9 @@ function seed_default_ruleset(): void
             ['max_minor' => 100000000, 'manner' => '+ two newspapers (Bengali + English) + wbtenders.gov.in'],
             ['max_minor' => null, 'manner' => '+ three newspapers (Bengali, English, Hindi) + official website + wbtenders.gov.in'],
         ]], $purchasePolicyId, 70],
-        ['SHORT_NOTICE_3DAY', 'Short-notice tender — minimum 3 days', 'Short-notice/emergent off-line tenders require a minimum notice of 3 days with wide publicity. Authorised only for emergent works.', 'notice', 'verification_required', 'field_required', ['fields' => ['emergency_reason']], $shortNoticeId, 80],
-        ['RETENDER_LT3', 'Re-tender when response < 3 bidders', 'If the response to an e-tender is fewer than three bidders, the tender should be invited afresh (re-tender).', 'evaluation', 'verification_required', 'manual', [], $twoBidId, 90],
-        ['TWO_BID_SYSTEM', 'Two-bid system for e-tenders', 'e-Tenders follow a two-bid system: technical proposal opened first; financial bids opened only for technically qualified bidders.', 'evaluation', 'verification_required', 'manual', [], $twoBidId, 100],
+        ['SHORT_NOTICE_3DAY', 'Short-notice tender — minimum 3 days', 'Short-notice/emergent off-line tenders require a minimum notice of 3 days with wide publicity. Authorised only for emergent works.', 'notice', 'verification_required', 'field_required', ['fields' => ['emergency_reason'], 'when' => ['tender_type' => 'short-notice']], $shortNoticeId, 80],
+        ['RETENDER_LT3', 'Re-tender when response < 3 bidders', 'If the response to an e-tender is fewer than three bidders, the tender should be invited afresh (re-tender).', 'evaluation', 'verification_required', 'manual', ['when' => ['tender_type' => 'e-tender']], $twoBidId, 90],
+        ['TWO_BID_SYSTEM', 'Two-bid system for e-tenders', 'e-Tenders follow a two-bid system: technical proposal opened first; financial bids opened only for technically qualified bidders.', 'evaluation', 'verification_required', 'manual', ['when' => ['tender_type' => 'e-tender']], $twoBidId, 100],
     ];
     foreach ($rules as [$code, $title, $desc, $cat, $sev, $type, $config, $ref, $sort]) {
         DB::insert(
@@ -301,14 +313,15 @@ function seed_schemes_funds(): void
 
 function seed_templates(): void
 {
-    if ((int) DB::val('SELECT COUNT(*) FROM templates') > 0) return;
     $templates = [
         ['nit', 'Notice Inviting Tender (NIT)', 'nit', template_nit_html()],
         ['loa', 'Letter of Acceptance (LOA)', 'loa', template_loa_html()],
+        ['agreement', 'Agreement', 'agreement', template_agreement_html()],
         ['work_order', 'Work Order', 'work_order', template_work_order_html()],
         ['completion_certificate', 'Completion Certificate', 'completion_certificate', template_completion_html()],
     ];
     foreach ($templates as [$code, $name, $docType, $html]) {
+        if (DB::one('SELECT id FROM templates WHERE code = ? AND version = 1', [$code])) { continue; }
         DB::insert(
             'INSERT INTO templates (uid, code, name, doc_type, version, content_html, merge_fields, is_default) VALUES (?,?,?,?,1,?,?,1)',
             [uid(), $code, $name, $docType, $html, json_store([])]
@@ -334,7 +347,7 @@ function seed_settings(): void
     }
 }
 
-function seed_all(bool $reset = false): void
+function seed_all(bool $reset = false, ?array $admin = null): void
 {
     if ($reset) {
         create_tables(true);
@@ -343,7 +356,7 @@ function seed_all(bool $reset = false): void
     }
     seed_permissions();
     seed_roles();
-    seed_admin();
+    seed_admin($admin);
     seed_panchayat();
     seed_financial_years();
     seed_rule_references();
@@ -351,6 +364,7 @@ function seed_all(bool $reset = false): void
     seed_schemes_funds();
     seed_templates();
     seed_settings();
+    if (function_exists('schema_backfill_panchayat_ids')) { schema_backfill_panchayat_ids(); }
     schema_stamp();
 }
 
@@ -414,6 +428,24 @@ function template_loa_html(): string
 HTML;
 }
 
+function template_agreement_html(): string
+{
+    return <<<'HTML'
+<div style="font-family:'Segoe UI',Arial,sans-serif;font-size:12pt;line-height:1.5">
+  <p style="text-align:center"><strong>{{panchayat_name}}</strong><br/>{{panchayat_address}}</p>
+  <hr/>
+  <h2 style="text-align:center;text-decoration:underline">AGREEMENT</h2>
+  <p><strong>Agreement No.:</strong> {{agreement_number}} &nbsp;&nbsp; <strong>Date:</strong> {{agreement_date}}</p>
+  <p>This agreement records the terms for <strong>{{work_name}}</strong> (Tender No. {{tender_number}}) with <strong>{{contractor_name}}</strong>.</p>
+  <p><strong>Agreement amount:</strong> {{amount}} &nbsp;&nbsp; <strong>Completion period:</strong> {{completion_period}}</p>
+  <p><strong>Security deposit:</strong> {{security_deposit}}</p>
+  <p>{{conditions}}</p>
+  <p style="margin-top:24pt"><strong>{{authority_name}}</strong><br/>{{authority_designation}}<br/>{{panchayat_name}}</p>
+  <p style="font-size:8pt;color:#555;margin-top:24pt">Generated by {{system_name}} on {{generated_at}}. Verification code: {{verification_code}}. System-generated draft.</p>
+</div>
+HTML;
+}
+
 function template_work_order_html(): string
 {
     return <<<'HTML'
@@ -468,16 +500,17 @@ function demo_seed(): array
     }
     $fy = DB::one("SELECT * FROM financial_years WHERE label = '2026-27'");
     $actor = $admin;
+    $demoPanchayatId = actor_panchayat_id($actor);
 
     $c1 = contractor_create(['legal_name' => '[DEMO] Sample Contractor Alpha', 'business_name' => 'Demo Firm', 'registration_class' => 'Class I', 'pan' => 'DEMOP1234A'], $actor);
     $c2 = contractor_create(['legal_name' => '[DEMO] Sample Contractor Beta', 'registration_class' => 'Class II'], $actor);
 
     $projectId = DB::insert(
-        'INSERT INTO projects (uid, fy_id, scheme_id, fund_id, work_name, description, location,
+        'INSERT INTO projects (uid, panchayat_id, fy_id, scheme_id, fund_id, work_name, description, location,
            administrative_approval_no, administrative_approval_date, technical_sanction_no, technical_sanction_date,
            estimate_amount_minor, sanctioned_amount_minor, status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [uid(), (int) $fy['id'], 1, 1, '[DEMO] Construction of CC road (sample data)', 'Demo project for testing the full lifecycle', 'Demo Mouza',
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [uid(), $demoPanchayatId, (int) $fy['id'], 1, 1, '[DEMO] Construction of CC road (sample data)', 'Demo project for testing the full lifecycle', 'Demo Mouza',
          'DEMO-AA-001', '2026-06-01', 'DEMO-TS-001', '2026-06-05', 100000000, 115000000, 'planned', (int) $actor['id']]
     );
 
@@ -494,8 +527,8 @@ function demo_seed(): array
     ], $actor);
 
     foreach ([[1, 'Earthwork excavation', 'All kinds of soil', 'cum', 100, 25000], [2, 'CC M20 concrete', '1:1.5:3', 'cum', 50, 550000]] as [$itemNo, $desc, $spec, $unit, $qty, $rate]) {
-        DB::insert('INSERT INTO boq_items (uid, tender_id, item_no, description, specification, unit, quantity, estimated_rate_minor) VALUES (?,?,?,?,?,?,?,?)',
-            [uid(), (int) $tender['id'], (string) $itemNo, $desc, $spec, $unit, $qty, $rate]);
+        DB::insert('INSERT INTO boq_items (uid, panchayat_id, tender_id, item_no, description, specification, unit, quantity, estimated_rate_minor) VALUES (?,?,?,?,?,?,?,?,?)',
+            [uid(), $demoPanchayatId, (int) $tender['id'], (string) $itemNo, $desc, $spec, $unit, $qty, $rate]);
     }
 
     tender_run_compliance((int) $tender['id'], $actor);
@@ -534,6 +567,7 @@ function demo_seed(): array
     $m = measurement_create($projectId, ['measurement_date' => '2026-08-20'], $actor);
     $boq1 = (int) DB::val("SELECT id FROM boq_items WHERE tender_id = ? AND item_no = '1'", [(int) $tender['id']]);
     measurement_add_item((int) $m['id'], ['boq_item_id' => $boq1, 'item_no' => '1', 'description' => 'Earthwork excavation', 'unit' => 'cum', 'current_quantity' => 40, 'rate_minor' => 25000], $actor);
+    measurement_set_status((int) $m['id'], 'checked', $actor);
     measurement_set_status((int) $m['id'], 'approved', $actor);
 
     $bill = bill_create($projectId, ['bill_type' => 'running'], $actor);
@@ -543,7 +577,12 @@ function demo_seed(): array
         bill_workflow_action((int) $bill['id'], 'approve', 'DEMO bill approval', $actor);
     }
     $pay = payment_record((int) $bill['id'], ['net_amount_minor' => 950000, 'payment_method' => 'bank_transfer', 'transaction_reference' => 'DEMO-TXN-0001'], $actor);
-    completion_advance($projectId, ['status' => 'closed', 'final_measurement_id' => (int) $m['id'], 'final_bill_id' => (int) $bill['id']], $actor);
+    completion_advance($projectId, ['status' => 'inspection_done', 'date' => '2026-10-30'], $actor);
+    completion_advance($projectId, ['status' => 'final_measurement_done', 'final_measurement_id' => (int) $m['id']], $actor);
+    completion_advance($projectId, ['status' => 'final_bill_done', 'final_bill_id' => (int) $bill['id']], $actor);
+    completion_advance($projectId, ['status' => 'final_payment_done', 'final_payment_id' => (int) $pay['id']], $actor);
+    completion_advance($projectId, ['status' => 'security_released', 'date' => '2026-11-15'], $actor);
+    completion_advance($projectId, ['status' => 'closed', 'date' => '2026-11-20'], $actor);
     document_generate_completion($projectId, $actor);
 
     if (DB::one('SELECT id FROM settings WHERE ' . sql_ident('key') . " = 'demo.seeded'")) {
@@ -583,7 +622,7 @@ function demo_reset(): array
 // ---------------------------------------------------------------------------
 // CLI entry point
 // ---------------------------------------------------------------------------
-if (PHP_SAPI === 'cli' && basename($_SERVER['SCRIPT_FILENAME'] ?? '') === basename(__FILE__)) {
+if (PHP_SAPI === 'cli' && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     $args = $GLOBALS['argv'] ?? [];
     if (in_array('--demo-reset', $args, true)) {
         echo json_encode(demo_reset(), JSON_PRETTY_PRINT) . "\n";

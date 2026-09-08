@@ -28,6 +28,8 @@ define('DB_SQLITE_FILE', env('DB_SQLITE_FILE', __DIR__ . '/data/app.db'));
 define('APP_NAME', 'Gram Panchayat Procurement & Work Management Portal');
 define('APP_SHORT', 'GP Portal');
 define('APP_TAGLINE', 'FY → Scheme → Project → Tender → Award → Execution → Bill → Payment → Audit');
+define('APP_TIMEZONE', env('APP_TIMEZONE', 'Asia/Kolkata'));
+date_default_timezone_set(APP_TIMEZONE);
 define('SESSION_NAME', 'GPPSESSID');
 define('SESSION_COOKIE_SECURE', (bool) env('SESSION_COOKIE_SECURE', '0')); // set to 1 only over HTTPS
 define('SESSION_LIFETIME', (int) env('SESSION_LIFETIME', 28800));          // seconds
@@ -38,7 +40,7 @@ define('RATE_LIMIT_WINDOW', (int) env('RATE_LIMIT_WINDOW', 900));         // sec
 
 // Seed admin (used only on first install).
 define('SEED_ADMIN_EMAIL', env('SEED_ADMIN_EMAIL', 'admin@panchayat.local'));
-define('SEED_ADMIN_PASSWORD', env('SEED_ADMIN_PASSWORD', 'ChangeMe@12345'));
+define('SEED_ADMIN_PASSWORD', env('SEED_ADMIN_PASSWORD', '')); // blank by default; web installer requires an admin password
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -71,7 +73,19 @@ function base_path(): string
     if ($bp !== null) {
         return $bp;
     }
-    $script = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '/index.php';
+    $script = isset($_SERVER['SCRIPT_NAME']) ? (string) $_SERVER['SCRIPT_NAME'] : '/index.php';
+    // Some non-Apache development servers set SCRIPT_NAME to the requested
+    // pretty URL (for example /reports/tenders.pdf). Prefer the real script
+    // filename relative to DOCUMENT_ROOT when available so subfolder installs
+    // still compute /gp-tender rather than /gp-tender/reports.
+    $filename = isset($_SERVER['SCRIPT_FILENAME']) ? str_replace('\\', '/', (string) $_SERVER['SCRIPT_FILENAME']) : '';
+    $docroot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim(str_replace('\\', '/', (string) $_SERVER['DOCUMENT_ROOT']), '/') : '';
+    if ($filename !== '' && $docroot !== '' && str_starts_with($filename, $docroot . '/')) {
+        $candidate = substr($filename, strlen($docroot));
+        if (str_ends_with($candidate, '/index.php') || str_ends_with($candidate, '/install.php')) {
+            $script = $candidate;
+        }
+    }
     $dir = str_replace('\\', '/', dirname($script));
     if ($dir === '/' || $dir === '.' || $dir === '') {
         $bp = '';

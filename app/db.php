@@ -24,6 +24,9 @@ class DB
 
     public static function driver(): string
     {
+        if (self::$pdo === null) {
+            self::connect();
+        }
         return self::$driver;
     }
 
@@ -44,6 +47,14 @@ class DB
             PDO::ATTR_EMULATE_PREPARES => false,
             PDO::ATTR_STRINGIFY_FETCHES => false,
         ]);
+    }
+
+    private static function mysqlIdentifier(string $id): string
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $id)) {
+            throw new InvalidArgumentException('Invalid MySQL identifier in configuration.');
+        }
+        return '`' . $id . '`';
     }
 
     public static function connect(): void
@@ -70,7 +81,7 @@ class DB
             }
             // Database missing — create it and reconnect (self-heal).
             $tmp = self::makePdo($base);
-            $tmp->exec('CREATE DATABASE IF NOT EXISTS `' . addcslashes(DB_NAME, '`') . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+            $tmp->exec('CREATE DATABASE IF NOT EXISTS ' . self::mysqlIdentifier(DB_NAME) . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
             $tmp = null;
             self::$pdo = self::makePdo($withDb);
         }

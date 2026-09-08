@@ -1,74 +1,74 @@
 -- =============================================================
--- GP Procurement & Work Management Portal — MySQL schema
--- Target: XAMPP (MySQL 8 / MariaDB 10). Import into phpMyAdmin
--- or run: mysql -u root < install.sql
--- Foreign-key checks are disabled during creation, so the import
--- order never fails (errno 150 impossible).
+-- GP Procurement & Work Management Portal — MySQL/MariaDB schema
+-- Generated from app/schema.php; target: Windows XAMPP MySQL/MariaDB
+-- Import into phpMyAdmin or run: mysql -u root < install.sql
+-- Data seed is handled by install.php/installer or php seed.php so that
+-- the first administrator password is never hard-coded in SQL.
 -- =============================================================
 
 CREATE DATABASE IF NOT EXISTS `gp_portal` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `gp_portal`;
 
 SET FOREIGN_KEY_CHECKS = 0;
-DROP TABLE IF EXISTS `roles`;
-DROP TABLE IF EXISTS `permissions`;
-DROP TABLE IF EXISTS `role_permissions`;
-DROP TABLE IF EXISTS `users`;
-DROP TABLE IF EXISTS `user_roles`;
-DROP TABLE IF EXISTS `panchayats`;
-DROP TABLE IF EXISTS `panchayat_members`;
-DROP TABLE IF EXISTS `financial_years`;
-DROP TABLE IF EXISTS `rulesets`;
-DROP TABLE IF EXISTS `rules`;
-DROP TABLE IF EXISTS `rule_references`;
-DROP TABLE IF EXISTS `rule_evaluations`;
-DROP TABLE IF EXISTS `schemes`;
-DROP TABLE IF EXISTS `funds`;
-DROP TABLE IF EXISTS `budget_allocations`;
-DROP TABLE IF EXISTS `projects`;
-DROP TABLE IF EXISTS `procurement_plans`;
-DROP TABLE IF EXISTS `contractors`;
-DROP TABLE IF EXISTS `contractor_documents`;
-DROP TABLE IF EXISTS `documents`;
+DROP TABLE IF EXISTS `backups`;
+DROP TABLE IF EXISTS `imports`;
+DROP TABLE IF EXISTS `external_refs`;
+DROP TABLE IF EXISTS `document_generations`;
+DROP TABLE IF EXISTS `templates`;
+DROP TABLE IF EXISTS `settings`;
+DROP TABLE IF EXISTS `numbering_sequences`;
+DROP TABLE IF EXISTS `audit_logs`;
+DROP TABLE IF EXISTS `notifications`;
+DROP TABLE IF EXISTS `approval_steps`;
+DROP TABLE IF EXISTS `retenders`;
+DROP TABLE IF EXISTS `tender_cancellations`;
+DROP TABLE IF EXISTS `corrigenda`;
+DROP TABLE IF EXISTS `contractor_performance`;
+DROP TABLE IF EXISTS `completions`;
+DROP TABLE IF EXISTS `payments`;
+DROP TABLE IF EXISTS `bill_items`;
+DROP TABLE IF EXISTS `bills`;
+DROP TABLE IF EXISTS `measurement_items`;
+DROP TABLE IF EXISTS `measurements`;
+DROP TABLE IF EXISTS `extension_requests`;
+DROP TABLE IF EXISTS `site_instructions`;
+DROP TABLE IF EXISTS `work_progress`;
+DROP TABLE IF EXISTS `work_orders`;
+DROP TABLE IF EXISTS `agreements`;
+DROP TABLE IF EXISTS `awards`;
+DROP TABLE IF EXISTS `financial_bid_items`;
+DROP TABLE IF EXISTS `financial_bids`;
+DROP TABLE IF EXISTS `technical_evaluations`;
+DROP TABLE IF EXISTS `evaluation_criteria`;
+DROP TABLE IF EXISTS `technical_openings`;
+DROP TABLE IF EXISTS `bid_documents`;
+DROP TABLE IF EXISTS `tender_bidders`;
+DROP TABLE IF EXISTS `boq_versions`;
+DROP TABLE IF EXISTS `boq_items`;
+DROP TABLE IF EXISTS `nit_versions`;
+DROP TABLE IF EXISTS `tender_versions`;
 DROP TABLE IF EXISTS `tender_approval_docs`;
 DROP TABLE IF EXISTS `tenders`;
-DROP TABLE IF EXISTS `tender_versions`;
-DROP TABLE IF EXISTS `nit_versions`;
-DROP TABLE IF EXISTS `boq_items`;
-DROP TABLE IF EXISTS `boq_versions`;
-DROP TABLE IF EXISTS `tender_bidders`;
-DROP TABLE IF EXISTS `bid_documents`;
-DROP TABLE IF EXISTS `technical_openings`;
-DROP TABLE IF EXISTS `evaluation_criteria`;
-DROP TABLE IF EXISTS `technical_evaluations`;
-DROP TABLE IF EXISTS `financial_bids`;
-DROP TABLE IF EXISTS `financial_bid_items`;
-DROP TABLE IF EXISTS `awards`;
-DROP TABLE IF EXISTS `agreements`;
-DROP TABLE IF EXISTS `work_orders`;
-DROP TABLE IF EXISTS `work_progress`;
-DROP TABLE IF EXISTS `site_instructions`;
-DROP TABLE IF EXISTS `extension_requests`;
-DROP TABLE IF EXISTS `measurements`;
-DROP TABLE IF EXISTS `measurement_items`;
-DROP TABLE IF EXISTS `bills`;
-DROP TABLE IF EXISTS `bill_items`;
-DROP TABLE IF EXISTS `payments`;
-DROP TABLE IF EXISTS `completions`;
-DROP TABLE IF EXISTS `contractor_performance`;
-DROP TABLE IF EXISTS `corrigenda`;
-DROP TABLE IF EXISTS `tender_cancellations`;
-DROP TABLE IF EXISTS `retenders`;
-DROP TABLE IF EXISTS `approval_steps`;
-DROP TABLE IF EXISTS `notifications`;
-DROP TABLE IF EXISTS `audit_logs`;
-DROP TABLE IF EXISTS `numbering_sequences`;
-DROP TABLE IF EXISTS `settings`;
-DROP TABLE IF EXISTS `templates`;
-DROP TABLE IF EXISTS `document_generations`;
-DROP TABLE IF EXISTS `external_refs`;
-DROP TABLE IF EXISTS `imports`;
-DROP TABLE IF EXISTS `backups`;
+DROP TABLE IF EXISTS `documents`;
+DROP TABLE IF EXISTS `contractor_documents`;
+DROP TABLE IF EXISTS `contractors`;
+DROP TABLE IF EXISTS `procurement_plans`;
+DROP TABLE IF EXISTS `projects`;
+DROP TABLE IF EXISTS `budget_allocations`;
+DROP TABLE IF EXISTS `funds`;
+DROP TABLE IF EXISTS `schemes`;
+DROP TABLE IF EXISTS `rule_evaluations`;
+DROP TABLE IF EXISTS `rule_references`;
+DROP TABLE IF EXISTS `rules`;
+DROP TABLE IF EXISTS `rulesets`;
+DROP TABLE IF EXISTS `financial_years`;
+DROP TABLE IF EXISTS `panchayat_members`;
+DROP TABLE IF EXISTS `user_roles`;
+DROP TABLE IF EXISTS `users`;
+DROP TABLE IF EXISTS `panchayats`;
+DROP TABLE IF EXISTS `role_permissions`;
+DROP TABLE IF EXISTS `permissions`;
+DROP TABLE IF EXISTS `roles`;
 
 CREATE TABLE `roles` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -79,14 +79,14 @@ CREATE TABLE `roles` (
   `is_system` INTEGER NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `permissions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   `code` VARCHAR(64) NOT NULL UNIQUE,
   `name` VARCHAR(160) NOT NULL,
   `category` VARCHAR(40) NOT NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `role_permissions` (
   `role_id` INTEGER NOT NULL,
@@ -94,37 +94,7 @@ CREATE TABLE `role_permissions` (
   FOREIGN KEY (`role_id`) REFERENCES `roles`(id) ON DELETE CASCADE,
   FOREIGN KEY (`permission_id`) REFERENCES `permissions`(id) ON DELETE CASCADE,
   PRIMARY KEY (`role_id`, `permission_id`)
-);
-
-CREATE TABLE `users` (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  uid VARCHAR(36) NOT NULL UNIQUE,
-  `panchayat_id` INTEGER NULL,
-  `email` VARCHAR(190) NOT NULL UNIQUE,
-  `password_hash` VARCHAR(255) NOT NULL,
-  `name` VARCHAR(160) NOT NULL,
-  `designation` VARCHAR(120) NULL,
-  `phone` VARCHAR(40) NULL,
-  `is_active` INTEGER NOT NULL DEFAULT 1,
-  `is_global_admin` INTEGER NOT NULL DEFAULT 0,
-  `totp_secret` VARCHAR(128) NULL,
-  `totp_enabled` INTEGER NOT NULL DEFAULT 0,
-  `last_login_at` DATETIME NULL,
-  `failed_login_count` INTEGER NOT NULL DEFAULT 0,
-  `locked_until` DATETIME NULL,
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `deleted_at` DATETIME NULL,
-  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT
-);
-
-CREATE TABLE `user_roles` (
-  `user_id` INTEGER NOT NULL,
-  `role_id` INTEGER NOT NULL,
-  FOREIGN KEY (`user_id`) REFERENCES `users`(id) ON DELETE CASCADE,
-  FOREIGN KEY (`role_id`) REFERENCES `roles`(id) ON DELETE CASCADE,
-  PRIMARY KEY (`user_id`, `role_id`)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `panchayats` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -151,7 +121,37 @@ CREATE TABLE `panchayats` (
   `is_active` INTEGER NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `users` (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
+  `email` VARCHAR(190) NOT NULL UNIQUE,
+  `password_hash` VARCHAR(255) NOT NULL,
+  `name` VARCHAR(160) NOT NULL,
+  `designation` VARCHAR(120) NULL,
+  `phone` VARCHAR(40) NULL,
+  `is_active` INTEGER NOT NULL DEFAULT 1,
+  `is_global_admin` INTEGER NOT NULL DEFAULT 0,
+  `totp_secret` VARCHAR(128) NULL,
+  `totp_enabled` INTEGER NOT NULL DEFAULT 0,
+  `last_login_at` DATETIME NULL,
+  `failed_login_count` INTEGER NOT NULL DEFAULT 0,
+  `locked_until` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `deleted_at` DATETIME NULL,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `user_roles` (
+  `user_id` INTEGER NOT NULL,
+  `role_id` INTEGER NOT NULL,
+  FOREIGN KEY (`user_id`) REFERENCES `users`(id) ON DELETE CASCADE,
+  FOREIGN KEY (`role_id`) REFERENCES `roles`(id) ON DELETE CASCADE,
+  PRIMARY KEY (`user_id`, `role_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `panchayat_members` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -167,7 +167,7 @@ CREATE TABLE `panchayat_members` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `financial_years` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -183,7 +183,7 @@ CREATE TABLE `financial_years` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('open','closed'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `rulesets` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -205,7 +205,7 @@ CREATE TABLE `rulesets` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `rules` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -226,7 +226,7 @@ CREATE TABLE `rules` (
   FOREIGN KEY (`ruleset_id`) REFERENCES `rulesets`(id) ON DELETE CASCADE,
   CHECK (`severity` IN ('info','warning','blocking','verification_required')),
   CHECK (`rule_type` IN ('manual','approval_required','document_required','notice_period','amount_threshold','date_sequence','field_required'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `rule_references` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -243,11 +243,12 @@ CREATE TABLE `rule_references` (
   `notes` TEXT NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `rule_evaluations` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `ruleset_id` INTEGER NULL,
   `entity_type` VARCHAR(40) NOT NULL,
   `entity_id` INTEGER NULL,
@@ -255,9 +256,10 @@ CREATE TABLE `rule_evaluations` (
   `summary` TEXT NOT NULL,
   `evaluated_by` INTEGER NULL,
   `evaluated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`ruleset_id`) REFERENCES `rulesets`(id) ON DELETE SET NULL,
   FOREIGN KEY (`evaluated_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `schemes` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -269,7 +271,7 @@ CREATE TABLE `schemes` (
   `is_active` INTEGER NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `funds` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -281,30 +283,33 @@ CREATE TABLE `funds` (
   `is_active` INTEGER NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `budget_allocations` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `scheme_id` INTEGER NULL,
   `fund_id` INTEGER NULL,
   `sanctioned_amount_minor` BIGINT NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`scheme_id`) REFERENCES `schemes`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fund_id`) REFERENCES `funds`(id) ON DELETE RESTRICT
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `projects` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `scheme_id` INTEGER NULL,
   `fund_id` INTEGER NULL,
   `head_of_account` VARCHAR(40) NULL,
-  `project_code` VARCHAR(60) NULL UNIQUE,
+  `project_code` VARCHAR(60) NULL,
   `work_name` VARCHAR(255) NOT NULL,
   `description` TEXT NULL,
   `location` VARCHAR(200) NULL,
@@ -332,16 +337,18 @@ CREATE TABLE `projects` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `deleted_at` DATETIME NULL,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`scheme_id`) REFERENCES `schemes`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fund_id`) REFERENCES `funds`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('planned','approved','tendered','awarded','in_progress','completed','closed','cancelled'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `procurement_plans` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `scheme_id` INTEGER NULL,
   `fund_id` INTEGER NULL,
@@ -358,18 +365,20 @@ CREATE TABLE `procurement_plans` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`scheme_id`) REFERENCES `schemes`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fund_id`) REFERENCES `funds`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('planned','initiated','tender_created','cancelled'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `contractors` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
-  `contractor_code` VARCHAR(40) NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
+  `contractor_code` VARCHAR(40) NULL,
   `legal_name` VARCHAR(200) NOT NULL,
   `business_name` VARCHAR(200) NULL,
   `address` TEXT NULL,
@@ -396,13 +405,15 @@ CREATE TABLE `contractors` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `deleted_at` DATETIME NULL,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('active','inactive','debarred'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `contractor_documents` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `contractor_id` INTEGER NOT NULL,
   `doc_type` VARCHAR(40) NOT NULL,
   `doc_name` VARCHAR(200) NOT NULL,
@@ -413,13 +424,15 @@ CREATE TABLE `contractor_documents` (
   `remarks` TEXT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE CASCADE,
   CHECK (`expiry_status` IN ('valid','expiring_soon','expired','verification_required','not_applicable'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `documents` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `entity_type` VARCHAR(40) NOT NULL,
   `entity_id` INTEGER NULL,
   `category` VARCHAR(60) NOT NULL,
@@ -432,34 +445,20 @@ CREATE TABLE `documents` (
   `version` INTEGER NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`uploaded_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
-
-CREATE TABLE `tender_approval_docs` (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  uid VARCHAR(36) NOT NULL UNIQUE,
-  `tender_id` INTEGER NOT NULL,
-  `doc_kind` VARCHAR(40) NOT NULL,
-  `doc_number` VARCHAR(120) NULL,
-  `doc_date` DATE NULL,
-  `amount_minor` BIGINT NULL,
-  `authority` VARCHAR(120) NULL,
-  `document_id` INTEGER NULL,
-  `remarks` TEXT NOT NULL,
-  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `tenders` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `project_id` INTEGER NULL,
   `scheme_id` INTEGER NULL,
   `fund_id` INTEGER NULL,
   `ruleset_id` INTEGER NULL,
-  `tender_number` VARCHAR(80) NOT NULL UNIQUE,
+  `tender_number` VARCHAR(80) NOT NULL,
   `nit_number` VARCHAR(80) NULL,
   `tender_type` VARCHAR(40) NOT NULL,
   `procurement_category` VARCHAR(40) NOT NULL,
@@ -510,6 +509,7 @@ CREATE TABLE `tenders` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `deleted_at` DATETIME NULL,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE SET NULL,
   FOREIGN KEY (`scheme_id`) REFERENCES `schemes`(id) ON DELETE SET NULL,
@@ -517,11 +517,30 @@ CREATE TABLE `tenders` (
   FOREIGN KEY (`ruleset_id`) REFERENCES `rulesets`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('draft','under_approval','approved','nit_generated','published','bidding','bid_closed','technical_evaluation','financial_evaluation','awarded','cancelled','retendered','closed'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `tender_approval_docs` (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
+  `tender_id` INTEGER NOT NULL,
+  `doc_kind` VARCHAR(40) NOT NULL,
+  `doc_number` VARCHAR(120) NULL,
+  `doc_date` DATE NULL,
+  `amount_minor` BIGINT NULL,
+  `authority` VARCHAR(120) NULL,
+  `document_id` INTEGER NULL,
+  `remarks` TEXT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
+  FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `tender_versions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `version_no` INTEGER NULL,
   `change_type` VARCHAR(40) NOT NULL,
@@ -529,13 +548,15 @@ CREATE TABLE `tender_versions` (
   `snapshot` TEXT NOT NULL,
   `changed_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`changed_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `nit_versions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `version_no` INTEGER NULL,
   `template_id` INTEGER NULL,
@@ -543,13 +564,15 @@ CREATE TABLE `nit_versions` (
   `generated_by` INTEGER NULL,
   `document_id` INTEGER NULL,
   `generated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`generated_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `boq_items` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `item_no` VARCHAR(40) NOT NULL,
   `group_name` VARCHAR(120) NULL,
@@ -562,25 +585,29 @@ CREATE TABLE `boq_items` (
   `sort_order` INTEGER NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `boq_versions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `version_no` INTEGER NULL,
   `locked` INTEGER NOT NULL DEFAULT 0,
   `snapshot` TEXT NOT NULL,
   `locked_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`locked_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `tender_bidders` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `contractor_id` INTEGER NOT NULL,
   `bidder_label` VARCHAR(200) NULL,
@@ -596,26 +623,30 @@ CREATE TABLE `tender_bidders` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`bid_status` IN ('submitted','technical_opened','technically_qualified','technically_disqualified','clarification_required','financial_opened','awarded','rejected','withdrawn'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `bid_documents` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `bidder_id` INTEGER NOT NULL,
   `doc_type` VARCHAR(40) NOT NULL,
   `document_id` INTEGER NULL,
   `is_confidential` INTEGER NOT NULL DEFAULT 1,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`bidder_id`) REFERENCES `tender_bidders`(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `technical_openings` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `opening_date` DATE NOT NULL,
   `opened_by` INTEGER NULL,
@@ -624,13 +655,15 @@ CREATE TABLE `technical_openings` (
   `minutes_document_id` INTEGER NULL,
   `status` VARCHAR(20) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`opened_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `evaluation_criteria` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `code` VARCHAR(64) NOT NULL,
   `criterion` VARCHAR(300) NOT NULL,
@@ -638,12 +671,14 @@ CREATE TABLE `evaluation_criteria` (
   `is_required` INTEGER NOT NULL DEFAULT 1,
   `sort_order` INTEGER NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `technical_evaluations` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `bidder_id` INTEGER NOT NULL,
   `criterion_id` INTEGER NULL,
@@ -653,16 +688,18 @@ CREATE TABLE `technical_evaluations` (
   `evidence_document_id` INTEGER NULL,
   `evaluated_by` INTEGER NULL,
   `evaluated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`bidder_id`) REFERENCES `tender_bidders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`criterion_id`) REFERENCES `evaluation_criteria`(id) ON DELETE SET NULL,
   FOREIGN KEY (`evaluated_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`result` IN ('pass','fail','clarification_required','not_applicable','verification_required'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `financial_bids` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `bidder_id` INTEGER NOT NULL,
   `total_amount_minor` BIGINT NOT NULL DEFAULT 0,
@@ -673,14 +710,16 @@ CREATE TABLE `financial_bids` (
   `is_confidential` INTEGER NOT NULL DEFAULT 1,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`bidder_id`) REFERENCES `tender_bidders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `financial_bid_items` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `financial_bid_id` INTEGER NOT NULL,
   `boq_item_id` INTEGER NULL,
   `item_no` VARCHAR(40) NULL,
@@ -688,13 +727,15 @@ CREATE TABLE `financial_bid_items` (
   `quantity` DOUBLE NOT NULL DEFAULT 0,
   `amount_minor` BIGINT NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`financial_bid_id`) REFERENCES `financial_bids`(id) ON DELETE CASCADE,
   FOREIGN KEY (`boq_item_id`) REFERENCES `boq_items`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `awards` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `contractor_id` INTEGER NOT NULL,
   `bidder_id` INTEGER NULL,
@@ -702,7 +743,7 @@ CREATE TABLE `awards` (
   `rank` INTEGER NULL,
   `approval_authority` VARCHAR(120) NULL,
   `approval_date` DATE NULL,
-  `loa_number` VARCHAR(80) NULL UNIQUE,
+  `loa_number` VARCHAR(80) NULL,
   `loa_date` DATE NULL,
   `security_deposit_minor` BIGINT NULL,
   `agreement_id` INTEGER NULL,
@@ -712,19 +753,21 @@ CREATE TABLE `awards` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`bidder_id`) REFERENCES `tender_bidders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('recommended','approved','loa_issued','agreement_done','work_order_issued','completed','cancelled'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `agreements` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `award_id` INTEGER NULL,
-  `agreement_number` VARCHAR(80) NULL UNIQUE,
+  `agreement_number` VARCHAR(80) NULL,
   `contractor_id` INTEGER NOT NULL,
   `amount_minor` BIGINT NOT NULL DEFAULT 0,
   `completion_period_days` INTEGER NULL,
@@ -735,21 +778,23 @@ CREATE TABLE `agreements` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`award_id`) REFERENCES `awards`(id) ON DELETE SET NULL,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `work_orders` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `award_id` INTEGER NULL,
   `agreement_id` INTEGER NULL,
   `project_id` INTEGER NULL,
   `contractor_id` INTEGER NOT NULL,
-  `work_order_number` VARCHAR(80) NULL UNIQUE,
+  `work_order_number` VARCHAR(80) NULL,
   `amount_minor` BIGINT NOT NULL DEFAULT 0,
   `start_date` DATE NULL,
   `completion_date` DATE NULL,
@@ -758,17 +803,19 @@ CREATE TABLE `work_orders` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`award_id`) REFERENCES `awards`(id) ON DELETE SET NULL,
   FOREIGN KEY (`agreement_id`) REFERENCES `agreements`(id) ON DELETE SET NULL,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE SET NULL,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `work_progress` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `project_id` INTEGER NOT NULL,
   `tender_id` INTEGER NULL,
   `progress_date` DATE NOT NULL,
@@ -779,27 +826,31 @@ CREATE TABLE `work_progress` (
   `site_photo_document_id` INTEGER NULL,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `site_instructions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `project_id` INTEGER NOT NULL,
   `instruction_date` DATE NOT NULL,
   `instruction` TEXT NOT NULL,
   `issued_by` INTEGER NULL,
   `document_id` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`issued_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `extension_requests` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `project_id` INTEGER NOT NULL,
   `requested_days` INTEGER NOT NULL DEFAULT 0,
   `reason` TEXT NOT NULL,
@@ -808,14 +859,16 @@ CREATE TABLE `extension_requests` (
   `decided_at` DATETIME NULL,
   `remarks` TEXT NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`decided_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('pending','approved','rejected'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `measurements` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `project_id` INTEGER NOT NULL,
   `tender_id` INTEGER NULL,
   `measurement_number` VARCHAR(60) NOT NULL,
@@ -828,17 +881,19 @@ CREATE TABLE `measurements` (
   `status` VARCHAR(64) NOT NULL DEFAULT 'draft',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`measured_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   FOREIGN KEY (`checked_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   FOREIGN KEY (`approved_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('draft','checked','approved','final'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `measurement_items` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `measurement_id` INTEGER NOT NULL,
   `boq_item_id` INTEGER NULL,
   `item_no` VARCHAR(40) NULL,
@@ -852,13 +907,15 @@ CREATE TABLE `measurement_items` (
   `overrun_flag` INTEGER NOT NULL DEFAULT 0,
   `remarks` TEXT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`measurement_id`) REFERENCES `measurements`(id) ON DELETE CASCADE,
   FOREIGN KEY (`boq_item_id`) REFERENCES `boq_items`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `bills` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `project_id` INTEGER NOT NULL,
   `tender_id` INTEGER NULL,
@@ -883,6 +940,7 @@ CREATE TABLE `bills` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
@@ -893,11 +951,12 @@ CREATE TABLE `bills` (
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`bill_type` IN ('running','final')),
   CHECK (`status` IN ('draft','submitted','checked','certified','approved','paid','partially_paid','rejected','returned'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `bill_items` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `bill_id` INTEGER NOT NULL,
   `measurement_item_id` INTEGER NULL,
   `item_no` VARCHAR(40) NULL,
@@ -907,13 +966,15 @@ CREATE TABLE `bill_items` (
   `rate_minor` BIGINT NOT NULL DEFAULT 0,
   `amount_minor` BIGINT NOT NULL DEFAULT 0,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`bill_id`) REFERENCES `bills`(id) ON DELETE CASCADE,
   FOREIGN KEY (`measurement_item_id`) REFERENCES `measurement_items`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `payments` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `fy_id` INTEGER NOT NULL,
   `bill_id` INTEGER NULL,
   `project_id` INTEGER NULL,
@@ -932,17 +993,19 @@ CREATE TABLE `payments` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`bill_id`) REFERENCES `bills`(id) ON DELETE SET NULL,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE SET NULL,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('recorded','approved','cancelled'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `completions` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `project_id` INTEGER NOT NULL,
   `tender_id` INTEGER NULL,
   `completion_date` DATE NULL,
@@ -958,17 +1021,19 @@ CREATE TABLE `completions` (
   `remarks` TEXT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE CASCADE,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`final_measurement_id`) REFERENCES `measurements`(id) ON DELETE SET NULL,
   FOREIGN KEY (`final_bill_id`) REFERENCES `bills`(id) ON DELETE SET NULL,
   FOREIGN KEY (`final_payment_id`) REFERENCES `payments`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('in_progress','inspection_done','final_measurement_done','final_bill_done','final_payment_done','security_released','closed'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `contractor_performance` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `contractor_id` INTEGER NOT NULL,
   `project_id` INTEGER NULL,
   `tender_id` INTEGER NULL,
@@ -981,15 +1046,17 @@ CREATE TABLE `contractor_performance` (
   `overall_remarks` TEXT NOT NULL,
   `rated_by` INTEGER NULL,
   `rated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`contractor_id`) REFERENCES `contractors`(id) ON DELETE CASCADE,
   FOREIGN KEY (`project_id`) REFERENCES `projects`(id) ON DELETE SET NULL,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`rated_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `corrigenda` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `corrigendum_number` VARCHAR(60) NOT NULL,
   `reason` TEXT NOT NULL,
@@ -1000,14 +1067,16 @@ CREATE TABLE `corrigenda` (
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('draft','approved','published'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `tender_cancellations` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `tender_id` INTEGER NOT NULL,
   `reason` TEXT NOT NULL,
   `authority` VARCHAR(120) NULL,
@@ -1016,23 +1085,26 @@ CREATE TABLE `tender_cancellations` (
   `notice_document_id` INTEGER NULL,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`tender_id`) REFERENCES `tenders`(id) ON DELETE CASCADE,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `retenders` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `original_tender_id` INTEGER NOT NULL,
   `new_tender_id` INTEGER NULL,
   `reason` TEXT NULL,
   `carry_forward` TEXT NOT NULL,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`original_tender_id`) REFERENCES `tenders`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`new_tender_id`) REFERENCES `tenders`(id) ON DELETE SET NULL,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `approval_steps` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1051,7 +1123,7 @@ CREATE TABLE `approval_steps` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`actor_id`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('pending','in_progress','approved','rejected','returned','clarification','skipped','cancelled'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `notifications` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1069,7 +1141,7 @@ CREATE TABLE `notifications` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`user_id`) REFERENCES `users`(id) ON DELETE CASCADE,
   CHECK (`severity` IN ('info','warning','critical'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `audit_logs` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1088,9 +1160,11 @@ CREATE TABLE `audit_logs` (
   `ip_address` VARCHAR(64) NULL,
   `user_agent` TEXT NULL,
   `request_id` VARCHAR(64) NULL,
+  `prev_hash` VARCHAR(64) NULL,
+  `entry_hash` VARCHAR(64) NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`actor_id`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `numbering_sequences` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1102,7 +1176,7 @@ CREATE TABLE `numbering_sequences` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`fy_id`) REFERENCES `financial_years`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `settings` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1110,7 +1184,7 @@ CREATE TABLE `settings` (
   `value` TEXT NOT NULL,
   `description` TEXT NULL,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `templates` (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1127,11 +1201,12 @@ CREATE TABLE `templates` (
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `document_generations` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `doc_type` VARCHAR(60) NOT NULL,
   `entity_type` VARCHAR(40) NULL,
   `entity_id` INTEGER NULL,
@@ -1141,12 +1216,14 @@ CREATE TABLE `document_generations` (
   `verification_code` VARCHAR(32) NULL,
   `generated_by` INTEGER NULL,
   `generated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`generated_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `external_refs` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `entity_type` VARCHAR(40) NOT NULL,
   `entity_id` INTEGER NULL,
   `official_portal` VARCHAR(200) NULL,
@@ -1159,12 +1236,14 @@ CREATE TABLE `external_refs` (
   `last_synced_at` DATETIME NULL,
   `sync_method` VARCHAR(20) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `imports` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `import_type` VARCHAR(60) NOT NULL,
   `file_name` VARCHAR(255) NULL,
   `status` VARCHAR(64) NOT NULL DEFAULT 'validating',
@@ -1173,13 +1252,15 @@ CREATE TABLE `imports` (
   `error_report` TEXT NOT NULL,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL,
   CHECK (`status` IN ('validating','preview','committed','failed'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `backups` (
   id INT AUTO_INCREMENT PRIMARY KEY,
   uid VARCHAR(36) NOT NULL UNIQUE,
+  `panchayat_id` INTEGER NULL,
   `backup_type` VARCHAR(20) NOT NULL,
   `file_name` VARCHAR(255) NULL,
   `size_bytes` INTEGER NULL,
@@ -1187,8 +1268,33 @@ CREATE TABLE `backups` (
   `verified` INTEGER NOT NULL DEFAULT 0,
   `created_by` INTEGER NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (`panchayat_id`) REFERENCES `panchayats`(id) ON DELETE RESTRICT,
   FOREIGN KEY (`created_by`) REFERENCES `users`(id) ON DELETE SET NULL
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE INDEX `idx_tenders_scope_fy_status` ON `tenders` (`panchayat_id`, `fy_id`, `status`);
+CREATE INDEX `idx_rule_evaluations_scope` ON `rule_evaluations` (`panchayat_id`, `entity_type`, `entity_id`);
+CREATE INDEX `idx_tenders_numbers` ON `tenders` (`tender_number`, `nit_number`);
+CREATE INDEX `idx_projects_scope_fy_status` ON `projects` (`panchayat_id`, `fy_id`, `status`);
+CREATE INDEX `idx_contractors_scope_status` ON `contractors` (`panchayat_id`, `status`);
+CREATE INDEX `idx_documents_entity` ON `documents` (`entity_type`, `entity_id`, `category`);
+CREATE INDEX `idx_document_generations_scope` ON `document_generations` (`panchayat_id`, `doc_type`, `generated_at`);
+CREATE INDEX `idx_bidders_tender_status` ON `tender_bidders` (`tender_id`, `bid_status`);
+CREATE INDEX `idx_financial_bids_tender` ON `financial_bids` (`tender_id`, `bidder_id`);
+CREATE INDEX `idx_awards_tender_status` ON `awards` (`tender_id`, `status`);
+CREATE INDEX `idx_bills_scope_fy_status` ON `bills` (`panchayat_id`, `fy_id`, `status`);
+CREATE INDEX `idx_payments_scope_fy_status` ON `payments` (`panchayat_id`, `fy_id`, `status`);
+CREATE INDEX `idx_audit_entity` ON `audit_logs` (`entity_type`, `entity_id`);
+CREATE INDEX `idx_audit_scope_created` ON `audit_logs` (`panchayat_id`, `created_at`);
+CREATE UNIQUE INDEX `ux_projects_scope_code` ON `projects` (`panchayat_id`, `fy_id`, `project_code`);
+CREATE UNIQUE INDEX `ux_contractors_scope_code` ON `contractors` (`panchayat_id`, `contractor_code`);
+CREATE UNIQUE INDEX `ux_tenders_scope_number` ON `tenders` (`panchayat_id`, `fy_id`, `tender_number`);
+CREATE UNIQUE INDEX `ux_tenders_scope_nit` ON `tenders` (`panchayat_id`, `fy_id`, `nit_number`);
+CREATE UNIQUE INDEX `ux_awards_scope_loa` ON `awards` (`panchayat_id`, `loa_number`);
+CREATE UNIQUE INDEX `ux_agreements_scope_number` ON `agreements` (`panchayat_id`, `agreement_number`);
+CREATE UNIQUE INDEX `ux_work_orders_scope_number` ON `work_orders` (`panchayat_id`, `work_order_number`);
+CREATE UNIQUE INDEX `ux_bills_scope_number` ON `bills` (`panchayat_id`, `fy_id`, `bill_number`);
+CREATE UNIQUE INDEX `ux_payments_scope_voucher` ON `payments` (`panchayat_id`, `fy_id`, `voucher_no`);
+CREATE UNIQUE INDEX `ux_payments_scope_txref` ON `payments` (`panchayat_id`, `transaction_reference`);
+CREATE UNIQUE INDEX `ux_numbering_sequences_scope` ON `numbering_sequences` (`scope`, `fy_id`, `panchayat_id`, `prefix`);
 SET FOREIGN_KEY_CHECKS = 1;
-

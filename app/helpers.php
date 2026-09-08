@@ -80,8 +80,144 @@ function minor($v): ?int
 
 function to_minor($rupees): int
 {
-    $n = (float) preg_replace('/[^0-9.\-]/', '', (string) $rupees);
-    return (int) round($n * 100);
+    // Parse decimal currency as a string so routine money input does not depend
+    // on binary floating point. Accepts values such as "1,23,456.78".
+    $s = preg_replace('/[^0-9.\-]/', '', trim((string) $rupees));
+    if ($s === '' || $s === '-' || $s === '.') {
+        return 0;
+    }
+    $neg = false;
+    if (str_starts_with($s, '-')) {
+        $neg = true;
+        $s = substr($s, 1);
+    }
+    $parts = explode('.', $s, 2);
+    $whole = preg_replace('/\D/', '', $parts[0] ?? '0');
+    $frac = preg_replace('/\D/', '', $parts[1] ?? '');
+    $wholeMinor = ((int) ($whole === '' ? '0' : $whole)) * 100;
+    $paise = (int) str_pad(substr($frac, 0, 2), 2, '0');
+    $minor = $wholeMinor + $paise;
+    return $neg ? -$minor : $minor;
+}
+
+
+/** Hash a password using Argon2id when available, falling back to PHP's secure default. */
+function password_hash_secure(string $password): string
+{
+    if (defined('PASSWORD_ARGON2ID')) {
+        return password_hash($password, PASSWORD_ARGON2ID);
+    }
+    return password_hash($password, PASSWORD_DEFAULT);
+}
+
+/** Convert blank form values to null before binding to nullable MySQL columns. */
+function blank_to_null($value): ?string
+{
+    if ($value === null) {
+        return null;
+    }
+    $s = trim((string) $value);
+    return $s === '' ? null : $s;
+}
+
+/** Normalise an optional DATE input for MySQL/MariaDB DATE columns. */
+function date_or_null($value): ?string
+{
+    $s = blank_to_null($value);
+    if ($s === null) {
+        return null;
+    }
+    $d = parse_date($s);
+    if (!$d) {
+        throw validation('Invalid date: ' . $s);
+    }
+    return $d->format('Y-m-d');
+}
+
+/** Normalise an optional DATETIME input for MySQL/MariaDB DATETIME columns. */
+function datetime_or_null($value): ?string
+{
+    $s = blank_to_null($value);
+    if ($s === null) {
+        return null;
+    }
+    $s = str_replace('T', ' ', $s);
+    foreach ([['!Y-m-d H:i:s', 'Y-m-d H:i:s', 19], ['!Y-m-d H:i', 'Y-m-d H:i', 16], ['!Y-m-d', 'Y-m-d', 10]] as $candidate) {
+        [$inputFormat, $checkFormat, $length] = $candidate;
+        $part = substr($s, 0, $length);
+        $d = DateTimeImmutable::createFromFormat($inputFormat, $part);
+        if ($d && $d->format($checkFormat) === $part) {
+            return $d->format('Y-m-d H:i:s');
+        }
+    }
+    throw validation('Invalid date/time: ' . $s);
+}
+
+/** Return the panchayat id of an actor/session, or null for unrestricted global context. */
+function actor_panchayat_id(?array $actor = null): ?int
+{
+    if ($actor && isset($actor['panchayat_id']) && $actor['panchayat_id'] !== null && $actor['panchayat_id'] !== '') {
+        return (int) $actor['panchayat_id'];
+    }
+    if (function_exists('current_user')) {
+        $u = current_user();
+        if ($u && isset($u['panchayat_id']) && $u['panchayat_id'] !== null && $u['panchayat_id'] !== '') {
+            return (int) $u['panchayat_id'];
+        }
+    }
+    $pid = null;
+    try {
+        $pid = DB::val('SELECT id FROM panchayats ORDER BY id LIMIT 1');
+    } catch (Throwable $e) {
+        $pid = null;
+    }
+    return $pid !== null ? (int) $pid : null;
+}
+
+/** Current user's panchayat scope; global administrators with no panchayat return null. */
+function current_scope_panchayat_id(): ?int
+{
+    if (!function_exists('current_user')) {
+        return null;
+    }
+    $u = current_user();
+    if (!$u) {
+        return null;
+    }
+    if ((int) ($u['is_global_admin'] ?? 0) === 1 && (($u['panchayat_id'] ?? null) === null || $u['panchayat_id'] === '')) {
+        return null;
+    }
+    return actor_panchayat_id($u);
+}
+
+/** SQL fragment for panchayat-scoped tables (safe because the id is integer-cast). */
+function panchayat_scope_sql(string $alias = ''): string
+{
+    $pid = current_scope_panchayat_id();
+    if ($pid === null) {
+        return '';
+    }
+    $prefix = $alias !== '' ? rtrim($alias, '.') . '.' : '';
+    return ' AND ' . $prefix . 'panchayat_id = ' . (int) $pid;
+}
+
+/** Enforce tenant isolation for an already-loaded row. */
+function scope_assert_row(?array $row, ?array $actor = null, string $label = 'record'): void
+{
+    if (!$row || !array_key_exists('panchayat_id', $row)) {
+        return;
+    }
+    $actor = $actor ?: (function_exists('current_user') ? current_user() : null);
+    if (!$actor) {
+        return;
+    }
+    if ((int) ($actor['is_global_admin'] ?? 0) === 1 && (($actor['panchayat_id'] ?? null) === null || $actor['panchayat_id'] === '')) {
+        return;
+    }
+    $pid = actor_panchayat_id($actor);
+    if ($pid !== null && $row['panchayat_id'] !== null && (int) $row['panchayat_id'] !== $pid) {
+        throw forbidden('Cross-Panchayat access denied for this ' . $label);
+    }
 }
 
 function from_minor($minor): string
@@ -151,7 +287,10 @@ function today_iso(): string
 
 function now_iso(): string
 {
-    return date('c');
+    // MySQL/MariaDB DATETIME columns do not accept ISO-8601 timezone strings
+    // reliably under strict SQL modes. Store local Asia/Kolkata time in the
+    // portable DATETIME format instead.
+    return date('Y-m-d H:i:s');
 }
 
 function parse_date(?string $s): ?DateTimeImmutable

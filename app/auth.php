@@ -32,6 +32,16 @@ function current_user(): ?array
     if (empty($_SESSION['user_id'])) {
         return null;
     }
+    if (!empty($_SESSION['last_activity']) && (time() - (int) $_SESSION['last_activity']) > SESSION_LIFETIME) {
+        $expiredUserId = (int) $_SESSION['user_id'];
+        // Avoid recursive current_user() -> audit_record() -> current_user() calls.
+        unset($_SESSION['user_id']);
+        if (function_exists('audit_record')) { audit_record('auth.session_expired', 'user', $expiredUserId, null); }
+        logout_user();
+        return null;
+    }
+    $_SESSION['last_activity'] = time();
+
     static $cacheKey = null;
     static $user = null;
     // Cache keyed on the session user so a login (or a session change) later
@@ -146,19 +156,30 @@ function login_user(string $email, string $password): array
 {
     $email = strtolower(trim($email));
     $user = DB::one('SELECT * FROM users WHERE email = ? AND deleted_at IS NULL', [$email]);
+    if ($user && !empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
+        audit_record('auth.login_locked', 'user', (int) $user['id'], $email);
+        throw err(403, 'ACCOUNT_LOCKED', 'Account temporarily locked because of repeated failed sign-in attempts');
+    }
     if (!$user || !password_verify($password, (string) $user['password_hash'])) {
-        audit_record('auth.login_failed', 'user', null, $email);
+        if ($user) {
+            $fails = (int) $user['failed_login_count'] + 1;
+            $lockedUntil = null;
+            if (RATE_LIMIT_ENABLED && $fails >= RATE_LIMIT_MAX) {
+                $lockedUntil = date('Y-m-d H:i:s', time() + RATE_LIMIT_WINDOW);
+                $fails = 0;
+            }
+            DB::run('UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?', [$fails, $lockedUntil, (int) $user['id']]);
+        }
+        audit_record('auth.login_failed', 'user', $user ? (int) $user['id'] : null, $email);
         throw err(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
     }
     if (!(int) $user['is_active']) {
         throw err(403, 'ACCOUNT_DISABLED', 'Account is disabled');
     }
-    if (!empty($user['locked_until']) && strtotime($user['locked_until']) > time()) {
-        throw err(403, 'ACCOUNT_LOCKED', 'Account temporarily locked');
-    }
     DB::run('UPDATE users SET last_login_at = CURRENT_TIMESTAMP, failed_login_count = 0, locked_until = NULL WHERE id = ?', [$user['id']]);
     session_regenerate_id(true);
     $_SESSION['user_id'] = (int) $user['id'];
+    $_SESSION['last_activity'] = time();
     audit_record('auth.login', 'user', $user['id'], $user['email']);
     $roles = user_roles((int) $user['id']);
     return [
